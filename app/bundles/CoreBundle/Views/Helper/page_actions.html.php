@@ -7,21 +7,48 @@
  * @license     GNU/GPLv3 http://www.gnu.org/licenses/gpl-3.0.html
  */
 
-$buttonGroupTypes = array('group', 'button-dropdown');
+if (isset($buttonFormat)) {
+    $buttonGroupTypes = array($buttonFormat);
+} else {
+    $count = 0;
+    // Get a count of buttons
+    if (isset($preCustomButtons)) {
+        $count += count($preCustomButtons);
+    }
+
+    //Build post template custom buttons
+    if (isset($customButtons)) {
+        $count += count($customButtons);
+    } elseif (isset($postCustomButtons)) {
+        $count += count($postCustomButtons);
+    }
+
+    if (isset($templateButtons)) {
+        foreach ($templateButtons as $templateButton) {
+            if ($templateButton)
+                $count++;
+        }
+    }
+
+    $buttonGroupTypes = ($count > 4) ? array('button-dropdown') : array('group', 'button-dropdown');
+}
+
+$forceVisible = (count($buttonGroupTypes) === 1);
+
 foreach ($buttonGroupTypes as $groupType) {
     $buttonCount = 0;
     if ($groupType == 'group') {
-        echo '<div class="btn-group hidden-xs hidden-sm">';
+        echo '<div class="std-toolbar btn-group' . ((!$forceVisible) ? ' hidden-xs hidden-sm' : '') .'">';
         $dropdownOpenHtml = '';
     } else {
-        echo '<div class="btn-group btn-group-sm hidden-md hidden-lg">';
+        echo '<div class="dropdown-toolbar btn-group' . ((!$forceVisible) ? ' hidden-md hidden-lg' : '') . '">';
         $dropdownOpenHtml  = '<button type="button" class="btn btn-default btn-nospin  dropdown-toggle" data-toggle="dropdown" aria-expanded="false"><i class="fa fa-caret-down"></i></button>' . "\n";
         $dropdownOpenHtml .= '<ul class="dropdown-menu dropdown-menu-right" role="menu">' . "\n";
     }
 
     include 'action_button_helper.php';
 
-    echo $renderPreCustomButtons($buttonCount, $dropdownOpenHtml);
+    echo $view['buttons']->renderPreCustomButtons($buttonCount, $dropdownOpenHtml);
 
     foreach ($templateButtons as $action => $enabled) {
         if (empty($enabled)) {
@@ -67,7 +94,7 @@ foreach ($buttonGroupTypes as $groupType) {
                     'message'       => $view["translator"]->trans("mautic." . $langVar . ".form.confirmdelete", array("%name%" => $item->$nameGetter() . " (" . $item->getId() . ")")),
                     'confirmAction' => $view['router']->generate('mautic_' . $routeBase . '_action', array_merge(array("objectAction" => "delete", "objectId" => $item->getId()), $query)),
                     'template'      => 'delete',
-                    'btnClass'      => ($groupType == 'button-dropdown') ? '' : $btnClass
+                    'btnClass'      => $btnClass
                 ));
                 break;
         }
@@ -76,7 +103,7 @@ foreach ($buttonGroupTypes as $groupType) {
         echo $wrapClosingTag;
     }
 
-    echo $renderPostCustomButtons($buttonCount, $dropdownOpenHtml);
+    echo $view['buttons']->renderPostCustomButtons($buttonCount, $dropdownOpenHtml);
 
     echo ($groupType == 'group') ? '</div>' : '</ul></div>';
 }

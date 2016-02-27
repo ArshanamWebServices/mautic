@@ -19,6 +19,7 @@ use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpKernel\Event\FilterControllerEvent;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Symfony\Component\Templating\DelegatingEngine;
 
 /**
@@ -56,6 +57,8 @@ class CommonController extends Controller implements MauticController
 
     /**
      * @param FilterControllerEvent $event
+     *
+     * @return void
      */
     public function initialize(FilterControllerEvent $event)
     {
@@ -68,7 +71,7 @@ class CommonController extends Controller implements MauticController
      *
      * @return JsonResponse|Response
      */
-    function delegateView($args)
+    public function delegateView($args)
     {
         if (!is_array($args)) {
             $args = array(
@@ -79,7 +82,7 @@ class CommonController extends Controller implements MauticController
             );
         }
 
-        if (isset($args['passthroughVars']['route'])) {
+        if (!isset($args['viewParameters']['currentRoute']) && isset($args['passthroughVars']['route'])) {
             $args['viewParameters']['currentRoute'] = $args['passthroughVars']['route'];
         }
 
@@ -91,6 +94,23 @@ class CommonController extends Controller implements MauticController
         $template   = $args['contentTemplate'];
 
         return $this->render($template, $parameters);
+    }
+
+    /**
+     * Determines if a redirect response should be returned or a Json response directing the ajax call to force a page
+     * refresh
+     *
+     * @param $url
+     *
+     * @return JsonResponse|\Symfony\Component\HttpFoundation\RedirectResponse
+     */
+    public function delegateRedirect($url)
+    {
+        if ($this->request->isXmlHttpRequest()) {
+            return new JsonResponse(array('redirect' => $url));
+        } else {
+            return $this->redirect($url);
+        }
     }
 
     /**
@@ -111,6 +131,14 @@ class CommonController extends Controller implements MauticController
     }
 
     /**
+     * Redirects /s and /s/ to /s/dashboard
+     */
+    public function redirectSecureRootAction()
+    {
+        return $this->redirect($this->generateUrl('mautic_dashboard_index'), 301);
+    }
+
+    /**
      * Redirects controller if not ajax or retrieves html output for ajax request
      *
      * @param array $args [returnUrl, viewParameters, contentTemplate, passthroughVars, flashes, forwardController]
@@ -128,7 +156,12 @@ class CommonController extends Controller implements MauticController
         //set flashes
         if (!empty($flashes)) {
             foreach ($flashes as $flash) {
-                $this->addFlash($flash['msg'], (!empty($flash['msgVars']) ? $flash['msgVars'] : array()), $flash['type']);
+                $this->addFlash(
+                    $flash['msg'],
+                    !empty($flash['msgVars']) ? $flash['msgVars'] : array(),
+                    !empty($flash['type']) ? $flash['type'] : 'notice',
+                    !empty($flash['domain']) ? $flash['domain'] : 'flashes'
+                );
             }
         }
 
@@ -180,12 +213,16 @@ class CommonController extends Controller implements MauticController
         }
 
         //render flashes
-        $passthrough['flashes']       = $this->getFlashContent();
+        $passthrough['flashes'] = $this->getFlashContent();
 
         if (!defined('MAUTIC_INSTALLER')) {
             // Prevent error in case installer is loaded via index_dev.php
             $passthrough['notifications'] = $this->getNotificationContent();
         }
+
+        //render browser notifications
+        $passthrough['browserNotifications'] = $this->factory->getSession()->get('mautic.browser.notifications', array());
+        $this->factory->getSession()->set('mautic.browser.notifications', array());
 
         $tmpl = (isset($parameters['tmpl'])) ? $parameters['tmpl'] : $this->request->get('tmpl', 'index');
         if ($tmpl == 'index') {
@@ -216,14 +253,14 @@ class CommonController extends Controller implements MauticController
             }
 
             $dataArray = array_merge(
-                $updatedContent,
-                $passthrough
+                $passthrough,
+                $updatedContent
             );
         } else {
             //just retrieve the content
             $dataArray = array_merge(
-                array('newContent'  => $newContent),
-                $passthrough
+                $passthrough,
+                array('newContent'  => $newContent)
             );
         }
 
@@ -278,25 +315,47 @@ class CommonController extends Controller implements MauticController
      * Generates access denied message
      *
      * @param bool   $batch Flag if a batch action is being performed
-     * @param string $msg   Message to display to the user
+     * @param string $msg   Message that is logged
      *
      * @return JsonResponse|\Symfony\Component\HttpFoundation\RedirectResponse|array
      * @throws AccessDeniedHttpException
      */
-    public function accessDenied($batch = false, $msg = 'mautic.core.error.accessdenied')
+    public function accessDenied($batch = false, $msg = 'mautic.core.url.error.401')
     {
         $anonymous = $this->factory->getSecurity()->isAnonymous();
 
         if ($anonymous || !$batch) {
-            throw new AccessDeniedHttpException($this->get('translator')->trans($msg, array(), 'flashes'));
+            throw new AccessDeniedHttpException(
+                $this->factory->getTranslator()->trans($msg,
+                    array(
+                        '%url%' => $this->request->getRequestUri()
+                    )
+                )
+            );
         }
 
         if ($batch) {
             return array(
                 'type' => 'error',
-                'msg'  => $msg
+                'msg'  => $this->factory->getTranslator()->trans('mautic.core.error.accessdenied', array(), 'flashes')
             );
         }
+    }
+
+    /**
+     * Generate 404 not found message
+     *
+     * @param string $msg Message to log
+     */
+    public function notFound($msg = 'mautic.core.url.error.404')
+    {
+        throw new NotFoundHttpException(
+            $this->factory->getTranslator()->trans($msg,
+                array(
+                    '%url%' => $this->request->getRequestUri()
+                )
+            )
+        );
     }
 
     /**
@@ -314,31 +373,6 @@ class CommonController extends Controller implements MauticController
     }
 
     /**
-     * Clear the application cache and run the warmup routine for the current environment
-     *
-     * @param bool $noWarmup If true, will not run warmup routine
-     *
-     *
-     * @return void
-     */
-    public function clearCache($noWarmup = false)
-    {
-        /** @var \Mautic\CoreBundle\Helper\CacheHelper $cacheHelper */
-        $cacheHelper = $this->factory->getHelper('cache');
-        $cacheHelper->clearCache($noWarmup);
-    }
-
-    /**
-     * Delete's the file Symfony caches settings in
-     */
-    public function clearCacheFile()
-    {
-        /** @var \Mautic\CoreBundle\Helper\CacheHelper $cacheHelper */
-        $cacheHelper = $this->factory->getHelper('cache');
-        $cacheHelper->clearCacheFile();
-    }
-
-    /**
      * Updates list filters, order, limit
      *
      * @return void
@@ -351,8 +385,8 @@ class CommonController extends Controller implements MauticController
         if (!empty($name)) {
             if ($this->request->query->has('orderby')) {
                 $orderBy = InputHelper::clean($this->request->query->get('orderby'), true);
-                $dir = $this->get('session')->get("mautic.$name.orderbydir", 'ASC');
-                $dir = ($dir == 'ASC') ? 'DESC' : 'ASC';
+                $dir     = $this->get('session')->get("mautic.$name.orderbydir", 'ASC');
+                $dir     = ($dir == 'ASC') ? 'DESC' : 'ASC';
                 $session->set("mautic.$name.orderby", $orderBy);
                 $session->set("mautic.$name.orderbydir", $dir);
             }
@@ -363,9 +397,9 @@ class CommonController extends Controller implements MauticController
             }
 
             if ($this->request->query->has('filterby')) {
-                $filter = InputHelper::clean($this->request->query->get("filterby"), true);
-                $value  = InputHelper::clean($this->request->query->get("value"), true);
-                $filters = $this->get("session")->get("mautic.$name.filters", '');
+                $filter  = InputHelper::clean($this->request->query->get("filterby"), true);
+                $value   = InputHelper::clean($this->request->query->get("value"), true);
+                $filters = $session->get("mautic.$name.filters", array());
                 if (empty($value)) {
                     if (isset($filters[$filter])) {
                         unset($filters[$filter]);
@@ -388,7 +422,7 @@ class CommonController extends Controller implements MauticController
      *
      * @param Form   $form
      * @param string $template
-     * @param string $theme
+     * @param mixed  $theme
      *
      * @return \Symfony\Component\Form\FormView
      */
@@ -424,7 +458,9 @@ class CommonController extends Controller implements MauticController
     /**
      * Renders notification info for ajax
      *
-     * @return string
+     * @param Request $request
+     *
+     * @return array
      */
     protected function getNotificationContent(Request $request = null)
     {
@@ -453,11 +489,12 @@ class CommonController extends Controller implements MauticController
     }
 
     /**
-     * @param      $message
-     * @param null $type
-     * @param bool $isRead
-     * @param null $header
-     * @param null $iconClass
+     * @param                $message
+     * @param null           $type
+     * @param bool|true      $isRead
+     * @param null           $header
+     * @param null           $iconClass
+     * @param \DateTime|null $datetime
      */
     public function addNotification($message, $type = null, $isRead = true, $header = null, $iconClass = null, \DateTime $datetime = null)
     {
@@ -483,10 +520,89 @@ class CommonController extends Controller implements MauticController
             //message is already translated
             $translatedMessage = $message;
         } else {
-            $translatedMessage = $this->get('translator')->trans($message, $messageVars, $domain);
+            if (isset($messageVars['pluralCount'])) {
+                $translatedMessage = $this->get('translator')->transChoice($message, $messageVars['pluralCount'], $messageVars, $domain);
+            } else {
+                $translatedMessage = $this->get('translator')->trans($message, $messageVars, $domain);
+            }
         }
 
         $this->factory->getSession()->getFlashBag()->add($type, $translatedMessage);
+
+        if (!defined('MAUTIC_INSTALLER') && $addNotification) {
+            switch ($type) {
+                case 'warning':
+                    $iconClass = "text-warning fa-exclamation-triangle";
+                    break;
+                case 'error':
+                    $iconClass = "text-danger fa-exclamation-circle";
+                    break;
+                case 'notice':
+                    $iconClass = "fa-info-circle";
+                default:
+                    break;
+            }
+
+            //If the user has not interacted with the browser for the last 30 seconds, consider the message unread
+            $lastActive = $this->request->get('mauticUserLastActive', 0);
+            $isRead     = $lastActive > 30 ? 0 : 1;
+
+            $this->addNotification($translatedMessage, null, $isRead, null, $iconClass);
+        }
+    }
+
+    /**
+     * @param        $message
+     * @param array  $messageVars
+     * @param string $domain
+     * @param null   $title
+     * @param null   $icon
+     * @param bool   $addNotification
+     * @param string $type
+     */
+    public function addBrowserNotification($message, $messageVars = array(), $domain = 'flashes', $title = null, $icon = null, $addNotification = true, $type = 'notice')
+    {
+        if ($domain == null) {
+            $domain = 'flashes';
+        }
+
+        $translator = $this->factory->getTranslator();
+
+        if ($domain === false) {
+            //message is already translated
+            $translatedMessage = $message;
+        } else {
+            if (isset($messageVars['pluralCount'])) {
+                $translatedMessage = $translator->transChoice($message, $messageVars['pluralCount'], $messageVars, $domain);
+            } else {
+                $translatedMessage = $translator->trans($message, $messageVars, $domain);
+            }
+        }
+
+        if ($title !== null) {
+            $title = $translator->trans($title);
+        } else {
+            $title = 'Mautic';
+        }
+
+        if ($icon == null) {
+            $icon = 'media/images/favicon.ico';
+        }
+
+        if (strpos($icon, 'http') !== 0) {
+            $assetHelper = $this->factory->getHelper('template.assets');
+            $icon        = $assetHelper->getUrl($icon, null, null, true);
+        }
+
+        $session                = $this->factory->getSession();
+        $browserNotifications   = $session->get('mautic.browser.notifications', array());
+        $browserNotifications[] = array(
+            'message' => $translatedMessage,
+            'title'   => $title,
+            'icon'    => $icon
+        );
+
+        $session->set('mautic.browser.notifications', $browserNotifications);
 
         if (!defined('MAUTIC_INSTALLER') && $addNotification) {
             switch ($type) {

@@ -10,12 +10,17 @@
 namespace Mautic\CampaignBundle\Model;
 
 use Doctrine\ORM\PersistentCollection;
+use Mautic\CoreBundle\Factory\MauticFactory;
 use Mautic\CoreBundle\Model\FormModel as CommonFormModel;
+use Mautic\FormBundle\Entity\Form;
 use Mautic\LeadBundle\Entity\Lead;
 use Mautic\CampaignBundle\Entity\Campaign;
 use Mautic\CampaignBundle\Entity\Event;
 use Mautic\CampaignBundle\Event as Events;
 use Mautic\CampaignBundle\CampaignEvents;
+use Mautic\LeadBundle\Entity\LeadList;
+use Symfony\Component\Console\Helper\ProgressBar;
+use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException;
 
 /**
@@ -25,7 +30,6 @@ use Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException;
  */
 class CampaignModel extends CommonFormModel
 {
-
     /**
      * {@inheritdoc}
      *
@@ -88,7 +92,7 @@ class CampaignModel extends CommonFormModel
      *
      * @param $id
      *
-     * @return null|object
+     * @return null|Campaign
      */
     public function getEntity ($id = null)
     {
@@ -102,6 +106,17 @@ class CampaignModel extends CommonFormModel
     }
 
     /**
+     * @param object $entity
+     */
+    public function deleteEntity($entity)
+    {
+        // Null all the event parents for this campaign to avoid database constraints
+        $this->getEventRepository()->nullEventParents($entity->getId());
+
+        parent::deleteEntity($entity);
+    }
+
+    /**
      * {@inheritdoc}
      *
      * @param $action
@@ -111,7 +126,7 @@ class CampaignModel extends CommonFormModel
      *
      * @throws \Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException
      */
-    protected function dispatchEvent ($action, &$entity, $isNew = false, $event = false)
+    protected function dispatchEvent ($action, &$entity, $isNew = false, \Symfony\Component\EventDispatcher\Event $event = null)
     {
         if ($entity instanceof \Mautic\CampaignBundle\Entity\Lead) {
             return;
@@ -135,7 +150,7 @@ class CampaignModel extends CommonFormModel
                 $name = CampaignEvents::CAMPAIGN_POST_DELETE;
                 break;
             default:
-                return false;
+                return null;
         }
 
         if ($this->dispatcher->hasListeners($name)) {
@@ -147,7 +162,7 @@ class CampaignModel extends CommonFormModel
 
             return $event;
         } else {
-            return false;
+            return null;
         }
     }
 
@@ -156,12 +171,15 @@ class CampaignModel extends CommonFormModel
      * @param          $sessionEvents
      * @param          $sessionConnections
      * @param          $deletedEvents
+     *
+     * @return array
      */
-    public function setEvents (Campaign &$entity, $sessionEvents, $sessionConnections, $deletedEvents)
+    public function setEvents (Campaign $entity, $sessionEvents, $sessionConnections, $deletedEvents)
     {
         $existingEvents = $entity->getEvents();
-
-        $events = $tempIds = $hierarchy = $parentUpdated = array();
+        $events =
+        $hierarchy =
+        $parentUpdated = array();
 
         //set the events from session
         foreach ($sessionEvents as $id => $properties) {
@@ -185,83 +203,74 @@ class CampaignModel extends CommonFormModel
 
             $event->setCampaign($entity);
             $events[$id] = $event;
-
-            if (strpos($id, 'new') === false) {
-                $tempIds[$event->getTempId()] = $id;
-            }
         }
 
         foreach ($deletedEvents as $deleteMe) {
             if (isset($existingEvents[$deleteMe])) {
+                // Remove child from parent
+                $parent = $existingEvents[$deleteMe]->getParent();
+                if ($parent) {
+                    $parent->removeChild($existingEvents[$deleteMe]);
+                    $existingEvents[$deleteMe]->removeParent();
+                }
+
                 $entity->removeEvent($existingEvents[$deleteMe]);
+
                 unset($events[$deleteMe]);
             }
         }
 
-        //loop again now to assign parents and cleanup endpoints which must be done after $tempIds has been populated
+        $relationships = array();
+        if (isset($sessionConnections['connections'])) {
+            foreach ($sessionConnections['connections'] as $connection) {
+                $source = $connection['sourceId'];
+                $target = $connection['targetId'];
+
+                $sourceDecision = (!empty($connection['anchors'])) ? $connection['anchors'][0]['endpoint'] : null;
+
+                if ($sourceDecision == 'leadsource') {
+                    // Lead source connection that does not matter
+                    continue;
+                }
+
+                $relationships[$target] = array(
+                    'parent'   => $source,
+                    'decision' => $sourceDecision
+                );
+            }
+        }
+
+        // Assign parent/child relationships
         foreach ($events as $id => $e) {
-            $canvasSettings = $e->getCanvasSettings();
+            if (isset($relationships[$id])) {
+                // Has a parent
+                $anchor = in_array($relationships[$id]['decision'], array('yes', 'no')) ? $relationships[$id]['decision'] : null;
+                $events[$id]->setDecisionPath($anchor);
 
-            if (!isset($canvasSettings['endpoints'])) {
-                $canvasSettings['endpoints'] = array();
-            }
+                $parentId = $relationships[$id]['parent'];
+                $events[$id]->setParent($events[$parentId]);
 
-            if (isset($sessionConnections[$id])) {
-                foreach ($sessionConnections[$id] as $sourceEndpoint => $children) {
-                    foreach ($children as $child => $targetEndpoint) {
-                        if (!isset($events[$child])) {
-                            if (strpos($child, 'new') === false && in_array($child, $tempIds)) {
-                                unset($canvasSettings['endpoints'][$sourceEndpoint][$child]);
-                                $childId = array_search($child, $tempIds);
-                                unset($canvasSettings['endpoints'][$sourceEndpoint][$childId]);
-                            } else {
-                                unset($canvasSettings['endpoints'][$sourceEndpoint][$child]);
-                            }
+                $hierarchy[$id] = $parentId;
+            } elseif ($events[$id]->getParent()) {
+                // No longer has a parent so null it out
 
-                            unset($canvasSettings['endpoints'][$sourceEndpoint][$child]);
+                // Remove decision so that it doesn't affect execution
+                $events[$id]->setDecisionPath(null);
 
-                        } elseif (!empty($targetEndpoint)) {
-                            $anchor = in_array($sourceEndpoint, array('yes', 'no')) ? $sourceEndpoint : null;
-                            $events[$child]->setDecisionPath($anchor);
-
-                            $events[$child]->setParent($events[$id]);
-                            $hierarchy[$child] = $id;
-                            $parentUpdated[] = $child;
-                        } elseif (!in_array($child, $parentUpdated)) {
-                            if (strpos($child, 'new') === false && in_array($child, $tempIds)) {
-                                unset($canvasSettings['endpoints'][$sourceEndpoint][$child]);
-                                $childId = array_search($child, $tempIds);
-                                unset($canvasSettings['endpoints'][$sourceEndpoint][$childId]);
-                            } else {
-                                unset($canvasSettings['endpoints'][$sourceEndpoint][$child]);
-                            }
-
-                            unset($canvasSettings['endpoints'][$sourceEndpoint][$child]);
-
-                            $events[$child]->removeParent();
-                            $hierarchy[$child] = 'null';
-                        }
-                    }
-                }
-            } else {
-                //get the parent for ordering
+                // Remove child from parent
                 $parent = $events[$id]->getParent();
-                $hierarchy[$id] = ($parent !== null) ? $parent->getId() : 'null';
-            }
+                $parent->removeChild($events[$id]);
 
-            //cleanup endpoints while here
-            foreach ($canvasSettings['endpoints'] as $sourceEndpoint => &$targets) {
-                foreach ($targets as $targetId => $targetEndpoint) {
-                    //check to see if there are both a temp ID and ID for target
-                    if (strpos($targetId, 'new') !== false && isset($tempIds[$targetId]) && isset($targets[$tempIds[$targetId]])) {
-                        //campaign has been edited
-                        unset($targets[$targetId]);
-                    }
-                }
-            }
+                // Remove parent from child
+                $events[$id]->removeParent();
+                $hierarchy[$id] = 'null';
+            } else {
+                // Is a parent
+                $hierarchy[$id] = 'null';
 
-            $e->setCanvasSettings($canvasSettings);
-            $entity->addEvent($id, $e);
+                // Remove decision so that it doesn't affect execution
+                $events[$id]->setDecisionPath(null);
+            }
         }
 
         //set event order used when querying the events
@@ -277,7 +286,83 @@ class CampaignModel extends CommonFormModel
             return ($aOrder < $bOrder) ? -1 : 1;
         });
 
+        // Persist events if campaign is being edited
+        if ($entity->getId()) {
+            $this->getEventRepository()->saveEntities($events);
+        }
+
         return $events;
+    }
+
+    /**
+     * @param      $entity
+     * @param      $settings
+     * @param bool $persist
+     * @param null $events
+     *
+     * @return mixed
+     */
+    public function setCanvasSettings($entity, $settings, $persist = true, $events = null)
+    {
+        if ($events === null) {
+            $events = $entity->getEvents();
+        }
+
+        $tempIds = array();
+
+        foreach ($events as $e) {
+            if ($e instanceof Event) {
+                $tempIds[$e->getTempId()] = $e->getId();
+            } else {
+                $tempIds[$e['tempId']] = $e['id'];
+            }
+        }
+
+        if (!isset($settings['nodes'])) {
+            $settings['nodes'] = array();
+        }
+
+        foreach ($settings['nodes'] as &$node) {
+            if (strpos($node['id'], 'new') !== false) {
+                // Find the real one and update the node
+                $node['id'] = str_replace($node['id'], $tempIds[$node['id']], $node['id']);
+            }
+        }
+
+        if (!isset($settings['connections'])) {
+            $settings['connections'] = array();
+        }
+
+        foreach ($settings['connections'] as &$connection) {
+            // Check source
+            if (strpos($connection['sourceId'], 'new') !== false) {
+                // Find the real one and update the node
+                $connection['sourceId'] = str_replace($connection['sourceId'], $tempIds[$connection['sourceId']], $connection['sourceId']);
+            }
+
+            // Check target
+            if (strpos($connection['targetId'], 'new') !== false) {
+                // Find the real one and update the node
+                $connection['targetId'] = str_replace($connection['targetId'], $tempIds[$connection['targetId']], $connection['targetId']);
+            }
+
+            // Rebuild anchors
+            $anchors = array();
+            foreach ($connection['anchors'] as $k => $anchor) {
+                $type           = ($k === 0) ? 'source' : 'target';
+                $anchors[$type] = $anchor['endpoint'];
+            }
+            $connection['anchors'] = $anchors;
+        }
+
+        $entity->setCanvasSettings($settings);
+
+        if ($persist) {
+            $this->getRepository()->saveEntity($entity);
+        } else {
+
+            return $settings;
+        }
     }
 
     /**
@@ -287,7 +372,7 @@ class CampaignModel extends CommonFormModel
      * @param string   $root
      * @param int      $order
      */
-    private function buildOrder ($hierarchy, &$events, &$entity, $root = 'null', $order = 1)
+    private function buildOrder ($hierarchy, &$events, $entity, $root = 'null', $order = 1)
     {
         $count = count($hierarchy);
 
@@ -295,7 +380,6 @@ class CampaignModel extends CommonFormModel
             if ($parent == $root || $count === 1) {
                 $events[$eventId]->setOrder($order);
                 $entity->addEvent($eventId, $events[$eventId]);
-
                 unset($hierarchy[$eventId]);
                 if (count($hierarchy)) {
                     $this->buildOrder($hierarchy, $events, $entity, $eventId, $order + 1);
@@ -319,11 +403,128 @@ class CampaignModel extends CommonFormModel
             $event  = new Events\CampaignBuilderEvent($this->translator);
             $this->dispatcher->dispatch(CampaignEvents::CAMPAIGN_ON_BUILD, $event);
             $events['decision']     = $event->getLeadDecisions();
-            $events['systemaction'] = $event->getSystemChanges();
+            $events['condition']    = $event->getLeadConditions();
             $events['action']       = $event->getActions();
         }
 
         return $events;
+    }
+
+    /**
+     * Get list of sources for a campaign
+     *
+     * @param $campaign
+     *
+     * @return array
+     */
+    public function getLeadSources($campaign)
+    {
+        $campaignId = ($campaign instanceof Campaign) ? $campaign->getId() : $campaign;
+
+        $sources = array();
+
+        // Lead lists
+        $sources['lists'] = $this->getRepository()->getCampaignListSources($campaignId);
+
+        // Forms
+        $sources['forms'] = $this->getRepository()->getCampaignFormSources($campaignId);
+
+        return $sources;
+    }
+
+    /**
+     * Add and/or delete lead sources from a campaign
+     *
+     * @param $entity
+     * @param $addedSources
+     * @param $deletedSources
+     */
+    public function setLeadSources(Campaign $entity, $addedSources, $deletedSources)
+    {
+        foreach ($addedSources as $type => $sources) {
+            foreach ($sources as $id) {
+                switch ($type) {
+                    case 'lists':
+                        $entity->addList($this->em->getReference('MauticLeadBundle:LeadList', $id));
+                        break;
+                    case 'forms':
+                        $entity->addForm($this->em->getReference('MauticFormBundle:Form', $id));
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+
+        foreach ($deletedSources as $type => $sources) {
+            foreach ($sources as $id) {
+                switch ($type) {
+                    case 'lists':
+                        $entity->removeList($this->em->getReference('MauticLeadBundle:LeadList', $id));
+                        break;
+                    case 'forms':
+                        $entity->removeForm($this->em->getReference('MauticFormBundle:Form', $id));
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+    }
+
+    /**
+     * Get a list of source choices
+     *
+     * @param $sourceType
+     *
+     * @return array
+     */
+    public function getSourceLists($sourceType = null)
+    {
+        $choices = array();
+        switch ($sourceType) {
+            case 'lists':
+            case null:
+                $choices['lists'] = array();
+
+                $model = $this->factory->getModel('lead.list');
+                $lists = (empty($options['global_only'])) ? $model->getUserLists() : $model->getGlobalLists();
+
+                foreach ($lists as $list) {
+                    $choices['lists'][$list['id']] = $list['name'];
+                }
+
+            case 'forms':
+            case null:
+                $choices['forms'] = array();
+
+                $viewOther = $this->factory->getSecurity()->isGranted('form:forms:viewother');
+                $repo      = $this->factory->getModel('form')->getRepository();
+                $repo->setCurrentUser($this->factory->getUser());
+
+                $forms = $repo->getFormList('', 0, 0, $viewOther, 'campaign');
+                foreach ($forms as $form) {
+                    $choices['forms'][$form['id']] = $form['name'];
+                }
+        }
+
+        foreach ($choices as &$typeChoices) {
+            asort($typeChoices);
+        }
+
+        return ($sourceType == null) ? $choices : $choices[$sourceType];
+    }
+
+    /**
+     * @param mixed $form
+     *
+     * @return array
+     */
+    public function getCampaignsByForm($form)
+    {
+        $formId = ($form instanceof Form) ? $form->getId() : $form;
+
+        return $this->getRepository()->findByFormId($formId);
     }
 
     /**
@@ -390,99 +591,104 @@ class CampaignModel extends CommonFormModel
     /**
      * Add lead to the campaign
      *
-     * @param Campaign $campaign
-     * @param          $lead
+     * @param Campaign  $campaign
+     * @param           $lead
+     * @param bool|true $manuallyAdded
      */
-    public function addLead (Campaign $campaign, $lead, $manuallyAdded = false, $persist = true)
+    public function addLead (Campaign $campaign, $lead, $manuallyAdded = true)
     {
-        if (!$lead instanceof Lead) {
-            $leadId = (is_array($lead) && isset($lead['id'])) ? $lead['id'] : $lead;
-            $lead = $this->em->getReference('MauticLeadBundle:Lead', $leadId);
-        }
+        $this->addLeads($campaign, array($lead), $manuallyAdded);
 
-        $campaignLead = $this->getCampaignLeadRepository()->findOneBy(array(
-            'lead'     => $lead,
-            'campaign' => $campaign
-        ));
-
-        if ($campaignLead != null) {
-            if ($manuallyAdded && $campaignLead->wasManuallyRemoved()) {
-                $campaignLead->setManuallyRemoved(false);
-                $campaignLead->setManuallyAdded(true);
-                $this->saveEntity($campaignLead, false);
-            } else {
-                //campaign lead already exists
-                return;
-            }
-        } else {
-            $campaignLead = new \Mautic\CampaignBundle\Entity\Lead();
-            $campaignLead->setCampaign($campaign);
-            $campaignLead->setLead($lead);
-            $campaignLead->setManuallyAdded($manuallyAdded);
-            $campaignLead->setDateAdded(new \DateTime());
-            $campaign->addLead($lead->getId(), $campaignLead);
-
-            if ($persist) {
-                $this->saveEntity($campaign, false);
-            }
-        }
-
-        if ($this->dispatcher->hasListeners(CampaignEvents::CAMPAIGN_ON_LEADCHANGE)) {
-            $event = new Events\CampaignLeadChangeEvent($campaign, $lead, 'added');
-            $this->dispatcher->dispatch(CampaignEvents::CAMPAIGN_ON_LEADCHANGE, $event);
-        }
+        unset($campaign, $lead);
     }
 
     /**
-     * Add lead(s) to the campaign
+     * Add lead(s) to a campaign
      *
      * @param Campaign $campaign
      * @param array    $leads
+     * @param bool     $manuallyAdded
+     * @param bool     $batchProcess
+     * @param int      $searchListLead
+     *
+     * @throws \Doctrine\ORM\ORMException
      */
-    public function addLeads (Campaign $campaign, array $leads, $manuallyAdded = false, $persist = true)
+    public function addLeads (Campaign $campaign, array $leads, $manuallyAdded = false, $batchProcess = false, $searchListLead = 1)
     {
-        foreach ($leads as $lead) {
+        /** @var \Mautic\LeadBundle\Model\LeadModel $leadModel */
+        $leadModel = $this->factory->getModel('lead');
 
+        foreach ($leads as $lead) {
             if (!$lead instanceof Lead) {
                 $leadId = (is_array($lead) && isset($lead['id'])) ? $lead['id'] : $lead;
                 $lead   = $this->em->getReference('MauticLeadBundle:Lead', $leadId);
             }
 
-            $campaignLead = $this->getCampaignLeadRepository()->findOneBy(array(
-                'lead'     => $lead,
-                'campaign' => $campaign
-            ));
+            if ($searchListLead == -1) {
+                $campaignLead = null;
+            } elseif ($searchListLead) {
+                $campaignLead = $this->getCampaignLeadRepository()->findOneBy(array(
+                    'lead'     => $lead,
+                    'campaign' => $campaign
+                ));
+            } else {
+                $campaignLead = $this->em->getReference('MauticCampaignBundle:Lead', array(
+                    'lead'     => $leadId,
+                    'campaign' => $campaign->getId()
+                ));
+            }
 
+            $dispatchEvent = true;
             if ($campaignLead != null) {
-                if ($manuallyAdded && $campaignLead->wasManuallyRemoved()) {
+                if ($campaignLead->wasManuallyRemoved()) {
                     $campaignLead->setManuallyRemoved(false);
-                    $campaignLead->setManuallyAdded(true);
-                    $this->saveEntity($campaignLead, false);
+                    $campaignLead->setManuallyAdded($manuallyAdded);
+
+                    try {
+                        $this->getRepository()->saveEntity($campaignLead);
+                    } catch (\Exception $exception) {
+                        $dispatchEvent = false;
+                    }
                 } else {
-                    return;
+                    $this->em->detach($campaignLead);
+                    if ($batchProcess) {
+                        $this->em->detach($lead);
+                    }
+
+                    unset($campaignLead, $lead);
+
+                    continue;
                 }
             } else {
                 $campaignLead = new \Mautic\CampaignBundle\Entity\Lead();
                 $campaignLead->setCampaign($campaign);
                 $campaignLead->setDateAdded(new \DateTime());
                 $campaignLead->setLead($lead);
-                $campaign->addLead($lead->getId(), $campaignLead);
-                if ($persist) {
-                    $this->saveEntity($campaign, false);
+                $campaignLead->setManuallyAdded($manuallyAdded);
+
+                try {
+                    $this->getRepository()->saveEntity($campaignLead);
+                } catch (\Exception $exception) {
+                    $dispatchEvent = false;
                 }
             }
 
-            if ($this->dispatcher->hasListeners(CampaignEvents::CAMPAIGN_ON_LEADCHANGE)) {
+            if ($dispatchEvent && $this->dispatcher->hasListeners(CampaignEvents::CAMPAIGN_ON_LEADCHANGE)) {
                 $event = new Events\CampaignLeadChangeEvent($campaign, $lead, 'added');
                 $this->dispatcher->dispatch(CampaignEvents::CAMPAIGN_ON_LEADCHANGE, $event);
+
+                unset($event);
             }
 
-            unset($campaignLead);
+            // Detach CampaignLead to save memory
+            $this->em->detach($campaignLead);
+            if ($batchProcess) {
+                $this->em->detach($lead);
+            }
+            unset($campaignLead, $lead);
         }
 
-        if ($persist) {
-            $this->saveEntity($campaign, false);
-        }
+        unset($leadModel, $campaign, $leads);
     }
 
     /**
@@ -492,127 +698,88 @@ class CampaignModel extends CommonFormModel
      * @param          $lead
      * @param bool     $manuallyRemoved
      */
-    public function removeLead (Campaign $campaign, $lead, $manuallyRemoved = false, $persist = true)
+    public function removeLead (Campaign $campaign, $lead, $manuallyRemoved = true)
     {
-        if (!$lead instanceof Lead) {
-            $leadId = (is_array($lead) && isset($lead['id'])) ? $lead['id'] : $lead;
-            $lead = $this->em->getReference('MauticLeadBundle:Lead', $leadId);
+        $this->removeLeads($campaign, array($lead), $manuallyRemoved);
 
-        }
-
-        $campaignLead = $this->getCampaignLeadRepository()->findOneBy(array(
-            'lead'     => $lead,
-            'campaign' => $campaign
-        ));
-
-        if (!$campaignLead) {
-            return;
-        }
-
-        if ($manuallyRemoved && $campaignLead->wasManuallyAdded()) {
-            //lead was manually added and now manually removed so get rid of it
-            $campaign->removeLead($campaignLead);
-            if ($persist) {
-                $this->saveEntity($campaign, false);
-            }
-        } elseif ($campaignLead->wasManuallyAdded()) {
-            //don't do anything because this lead was manually added
-            return;
-        } else {
-            $campaign->removeLead($campaignLead);
-            if ($persist) {
-                $this->saveEntity($campaign, false);
-            }
-        }
-
-        //remove scheduled events if the lead was removed
-        $this->removeScheduledEvents($campaign, $lead);
-
-        if ($this->dispatcher->hasListeners(CampaignEvents::CAMPAIGN_ON_LEADCHANGE)) {
-            $event = new Events\CampaignLeadChangeEvent($campaign, $lead, 'removed');
-            $this->dispatcher->dispatch(CampaignEvents::CAMPAIGN_ON_LEADCHANGE, $event);
-        }
+        unset($campaign, $lead);
     }
 
     /**
      * Remove lead(s) from the campaign
      *
-     * @param Campaign $campaign
-     * @param array    $leads
-     * @param bool     $manuallyRemoved
+     * @param Campaign   $campaign
+     * @param array      $leads
+     * @param bool|false $manuallyRemoved
+     * @param bool|false $batchProcess
+     * @param bool|false $skipFindOne
+     *
+     * @throws \Doctrine\ORM\ORMException
      */
-    public function removeLeads (Campaign $campaign, array $leads, $manuallyRemoved = false, $persist = true)
+    public function removeLeads (Campaign $campaign, array $leads, $manuallyRemoved = false, $batchProcess = false, $skipFindOne = false)
     {
         foreach ($leads as $lead) {
+            $dispatchEvent = false;
 
             if (!$lead instanceof Lead) {
                 $leadId = (is_array($lead) && isset($lead['id'])) ? $lead['id'] : $lead;
-                $lead = $this->em->getReference('MauticLeadBundle:Lead', $leadId);
+                $lead   = $this->em->getReference('MauticLeadBundle:Lead', $leadId);
             }
 
-            $campaignLead = $this->getCampaignLeadRepository()->findOneBy(array(
-                'lead'     => $lead,
-                'campaign' => $campaign
-            ));
+            $campaignLead = (!$skipFindOne) ?
+                $this->getCampaignLeadRepository()->findOneBy(array(
+                    'lead'     => $lead,
+                    'campaign' => $campaign
+                )) :
+                $this->em->getReference('MauticCampaignBundle:Lead', array(
+                    'lead'     => $leadId,
+                    'campaign' => $campaign->getId()
+                ));
 
             if ($campaignLead == null) {
-                //doesn't exist
-                unset($campaignLead);
+                if ($batchProcess) {
+                    $this->em->detach($lead);
+                    unset($lead);
+                }
+
                 continue;
             }
 
-            if ($manuallyRemoved && $campaignLead->wasManuallyAdded()) {
-                //lead was manually added and now manually removed so get rid of it
-                $campaign->removeLead($campaignLead);
-                if ($persist) {
-                    $this->saveEntity($campaign, false);
+            if (($manuallyRemoved && $campaignLead->wasManuallyAdded()) || (!$manuallyRemoved && !$campaignLead->wasManuallyAdded())) {
+                //lead was manually added and now manually removed or was not manually added and now being removed
+
+                // Manually added and manually removed so chuck it
+                $dispatchEvent   = true;
+
+                $this->getEventRepository()->deleteEntity($campaignLead);
+            } elseif ($manuallyRemoved) {
+                $dispatchEvent = true;
+
+                $campaignLead->setManuallyRemoved(true);
+                $this->getEventRepository()->saveEntity($campaignLead);
+            }
+
+            if ($dispatchEvent) {
+                //remove scheduled events if the lead was removed
+                $this->removeScheduledEvents($campaign, $lead);
+
+                if ($this->dispatcher->hasListeners(CampaignEvents::CAMPAIGN_ON_LEADCHANGE)) {
+                    $event = new Events\CampaignLeadChangeEvent($campaign, $lead, 'removed');
+                    $this->dispatcher->dispatch(CampaignEvents::CAMPAIGN_ON_LEADCHANGE, $event);
+
+                    unset($event);
                 }
-            } elseif ($campaignLead->wasManuallyAdded()) {
-                //don't do anything because this lead was manually added
-                return;
-            } else {
-                $campaign->removeLead($campaignLead);
             }
 
-            if ($this->dispatcher->hasListeners(CampaignEvents::CAMPAIGN_ON_LEADCHANGE)) {
-                $event = new Events\CampaignLeadChangeEvent($campaign, $lead, 'removed');
-                $this->dispatcher->dispatch(CampaignEvents::CAMPAIGN_ON_LEADCHANGE, $event);
+            // Detach CampaignLead to save memory
+            $this->em->detach($campaignLead);
+
+            if ($batchProcess) {
+                $this->em->detach($lead);
             }
 
-            //remove scheduled events if the lead was removed
-            $this->removeScheduledEvents($campaign, $lead);
+            unset($campaignLead, $lead);
         }
-
-        if ($persist) {
-            $this->saveEntity($campaign, false);
-        }
-    }
-
-    /**
-     * Get event log for a campaign
-     *
-     * @param      $campaign
-     * @param null $event
-     * @param null $leads
-     *
-     * @return mixed
-     */
-    public function getEventLog ($campaign, $event = null, $leads = null)
-    {
-        $campaignId = ($campaign instanceof Campaign) ? $campaign->getId() : $campaign;
-        if (is_array($event)) {
-            $eventId = $event['id'];
-        } elseif ($event instanceof Event) {
-            $eventId = $event->getId();
-        } else {
-            $eventId = $event;
-        }
-
-        if ($leads instanceof PersistentCollection) {
-            $leads = array_keys($leads->toArray());
-        }
-
-        return $this->em->getRepository('MauticCampaignBundle:LeadEventLog')->getCampaignLog($campaignId, $eventId, $leads);
     }
 
     /**
@@ -635,64 +802,187 @@ class CampaignModel extends CommonFormModel
     }
 
     /**
-     * @param      $campaign
-     * @param bool $unlock
+     * @param Campaign        $campaign
+     * @param int             $limit
+     * @param bool            $maxLeads
+     * @param OutputInterface $output
+     *
+     * @return int
      */
-    public function saveEntity ($campaign, $unlock = true)
+    public function rebuildCampaignLeads (Campaign $campaign, $limit = 1000, $maxLeads = false, OutputInterface $output = null)
     {
-        parent::saveEntity($campaign, $unlock);
+        defined('MAUTIC_REBUILDING_CAMPAIGNS') or define('MAUTIC_REBUILDING_CAMPAIGNS', 1);
 
-        //update leads
-        if (empty($campaign->leadsRebuilt)) {
-            $changes = $campaign->getChanges();
-            $removed = (!empty($changes['lists']) && isset($changes['lists']['removed'])) ? array_keys($changes['lists']['removed']) : null;
-            $this->buildCampaignLeads($campaign, $removed);
+        $repo = $this->getRepository();
+
+        // Get a list of lead lists this campaign is associated with
+        $lists = $repo->getCampaignListIds($campaign->getId());
+
+        $batchLimiters = array(
+            'dateTime' => $this->factory->getDate()->toUtcString()
+        );
+
+
+        if (count($lists)) {
+            // Get a count of new leads
+            $newLeadsCount = $repo->getCampaignLeadsFromLists(
+                $campaign->getId(),
+                $lists,
+                array(
+                    'countOnly'     => true,
+                    'batchLimiters' => $batchLimiters
+                )
+            );
+
+            // Ensure the same list is used each batch
+            $batchLimiters['maxId'] = (int) $newLeadsCount['maxId'];
+
+            // Number of total leads to process
+            $leadCount = (int) $newLeadsCount['count'];
+        } else {
+            // No lists to base campaign membership off of so ignore
+            $leadCount = 0;
         }
-    }
 
-    /**
-     * @param      $campaign
-     * @param null $removedLists
-     */
-    public function buildCampaignLeads ($campaign, $removedLists = null)
-    {
-        $lists = $campaign->getLists();
-
-        /** @var \Mautic\LeadBundle\Model\ListModel $listModel */
-        $listModel = $this->factory->getModel('lead.list');
-        $leads     = $listModel->getLeadsByList($lists, true);
-
-        foreach ($leads as $list => $listLeads) {
-            $this->addLeads($campaign, $listLeads, false, false);
+        if ($output) {
+            $output->writeln($this->translator->trans('mautic.campaign.rebuild.to_be_added', array('%leads%' => $leadCount, '%batch%' => $limit)));
         }
 
-        if ($removedLists != null) {
-            $campaignListIds = array_keys($lists->toArray());
-            $leads           = $listModel->getLeadsByList($removedLists, true);
-            $listRepo        = $this->em->getRepository('MauticLeadBundle:LeadList');
+        // Handle by batches
+        $start = $leadsProcessed = 0;
 
-            foreach ($leads as $list => $listLeads) {
-                //keyed by lead id then list id
-                $listsByLeads = $listRepo->getLeadLists($listLeads, true);
+        // Try to save some memory
+        gc_enable();
 
-                foreach ($listLeads as $l) {
-                    //does this lead belong to another list still in the campaign?
-                    $leadsLists = array_keys($listsByLeads[$l]);
+        if ($leadCount) {
+            $maxCount = ($maxLeads) ? $maxLeads : $leadCount;
 
-                    $inBothLists = array_intersect($leadsLists, $campaignListIds);
-                    if (!empty($inBothLists)) {
-                        continue;
+            if ($output) {
+                $progress = new ProgressBar($output, $maxCount);
+                $progress->start();
+            }
+
+            // Add leads
+            while ($start < $leadCount) {
+                // Keep CPU down for large lists; sleep per $limit batch
+                $this->batchSleep();
+
+                // Get a count of new leads
+                $newLeadList = $repo->getCampaignLeadsFromLists(
+                    $campaign->getId(),
+                    $lists,
+                    array(
+                        'limit'         => $limit,
+                        'batchLimiters' => $batchLimiters
+                    )
+                );
+
+                $start += $limit;
+
+                foreach ($newLeadList as $l) {
+                    $this->addLeads($campaign, array($l), false, true, -1);
+
+                    $leadsProcessed++;
+                    if ($output && $leadsProcessed < $maxCount) {
+                        $progress->setProgress($leadsProcessed);
                     }
 
-                    $this->removeLead($campaign, $l, false, false);
+                    unset($l);
+
+                    if ($maxLeads && $leadsProcessed >= $maxLeads) {
+                        // done for this round, bye bye
+                        if ($output) {
+                            $progress->finish();
+                        }
+
+                        return $leadsProcessed;
+                    }
                 }
+
+                unset($newLeadList);
+
+                // Free some memory
+                gc_collect_cycles();
+            }
+
+            if ($output) {
+                $progress->finish();
+                $output->writeln('');
             }
         }
 
-        $campaign->leadsRebuilt = true;
-        //prevent another update entry in audit log
-        $campaign->resetChanges();
-        $this->saveEntity($campaign, false);
+        // Get a count of leads to be removed
+        $removeLeadCount = $repo->getCampaignOrphanLeads(
+            $campaign->getId(),
+            $lists,
+            array(
+                'countOnly'     => true,
+                'batchLimiters' => $batchLimiters
+            )
+        );
+
+        // Restart batching
+        $start                  = $lastRoundPercentage = 0;
+        $leadCount              = $removeLeadCount['count'];
+        $batchLimiters['maxId'] = $removeLeadCount['maxId'];
+
+        if ($output) {
+            $output->writeln($this->translator->trans('mautic.lead.list.rebuild.to_be_removed', array('%leads%' => $leadCount, '%batch%' => $limit)));
+        }
+
+        if ($leadCount) {
+            $maxCount = ($maxLeads) ? $maxLeads : $leadCount;
+
+            if ($output) {
+                $progress = new ProgressBar($output, $maxCount);
+                $progress->start();
+            }
+
+            // Remove leads
+            while ($start < $leadCount) {
+                // Keep CPU down for large lists; sleep per $limit batch
+                $this->batchSleep();
+
+                $removeLeadList = $repo->getCampaignOrphanLeads(
+                    $campaign->getId(),
+                    $lists,
+                    array(
+                        'limit'         => $limit,
+                        'batchLimiters' => $batchLimiters
+                    )
+                );
+
+                foreach ($removeLeadList as $l) {
+                    $this->removeLeads($campaign, array($l), false, true, true);
+
+                    $leadsProcessed++;
+                    if ($output && $leadsProcessed < $maxCount) {
+                        $progress->setProgress($leadsProcessed);
+                    }
+
+                    if ($maxLeads && $leadsProcessed >= $maxLeads) {
+                        // done for this round, bye bye
+                        $progress->finish();
+
+                        return $leadsProcessed;
+                    }
+                }
+
+                $start += $limit;
+
+                unset($removeLeadList);
+
+                // Free some memory
+                gc_collect_cycles();
+            }
+
+            if($output) {
+                $progress->finish();
+                $output->writeln('');
+            }
+        }
+
+        return $leadsProcessed;
     }
 
     /**
@@ -707,7 +997,7 @@ class CampaignModel extends CommonFormModel
     {
         $campaignId = ($campaign instanceof Campaign) ? $campaign->getId() : $campaign;
         $eventId    = (is_array($event) && isset($event['id'])) ? $event['id'] : $event;
-        $leads = $this->em->getRepository('MauticCampaignBundle:Lead')->getLeads($campaignId, $eventId);
+        $leads      = $this->em->getRepository('MauticCampaignBundle:Lead')->getLeads($campaignId, $eventId);
 
         return $leads;
     }
@@ -719,5 +1009,37 @@ class CampaignModel extends CommonFormModel
     public function removeScheduledEvents($campaign, $lead)
     {
         $this->em->getRepository('MauticCampaignBundle:LeadEventLog')->removeScheduledEvents($campaign->getId(), $lead->getId());
+    }
+
+    /**
+     * @param $id
+     *
+     * @return array
+     */
+    public function getCampaignListIds($id)
+    {
+        return $this->getRepository()->getCampaignListIds((int) $id);
+    }
+
+    /**
+     * Batch sleep according to settings
+     */
+    protected function batchSleep()
+    {
+        $eventSleepTime = $this->factory->getParameter('batch_campaign_sleep_time', false);
+        if ($eventSleepTime === false) {
+            $eventSleepTime = $this->factory->getParameter('batch_sleep_time', 1);
+        }
+
+        if (empty($eventSleepTime)) {
+
+            return;
+        }
+
+        if ($eventSleepTime < 1) {
+            usleep($eventSleepTime * 1000000);
+        } else {
+            sleep($eventSleepTime);
+        }
     }
 }

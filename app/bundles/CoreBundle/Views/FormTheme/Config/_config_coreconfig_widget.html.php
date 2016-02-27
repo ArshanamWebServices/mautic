@@ -20,6 +20,7 @@ $template = '<div class="col-md-6">{content}</div>';
     <div class="panel-body">
         <div class="row">
             <?php echo $view['form']->rowIfExists($fields, 'site_url', $template); ?>
+            <?php echo $view['form']->rowIfExists($fields, 'webroot', $template); ?>
             <?php echo $view['form']->rowIfExists($fields, 'update_stability', $template); ?>
             <?php echo $view['form']->rowIfExists($fields, 'cache_path', $template); ?>
             <?php echo $view['form']->rowIfExists($fields, 'log_path', $template); ?>
@@ -54,59 +55,7 @@ $template = '<div class="col-md-6">{content}</div>';
 </div>
 <?php endif; ?>
 
-<?php if (count(array_intersect($fieldKeys, array('mailer_from_name', 'mailer_from_email', 'mailer_transport', 'mailer_spool_type')))): ?>
-<div class="panel panel-primary">
-    <div class="panel-heading">
-        <h3 class="panel-title"><?php echo $view['translator']->trans('mautic.core.config.header.mail'); ?></h3>
-    </div>
-    <div class="panel-body">
-        <div class="row">
-            <?php echo $view['form']->rowIfExists($fields, 'mailer_from_name', $template); ?>
-            <?php echo $view['form']->rowIfExists($fields, 'mailer_from_email', $template); ?>
-        </div>
-
-        <?php if (isset($fields['mailer_from_name']) || isset($fields['mailer_from_email'])): ?>
-        <hr class="text-muted" />
-        <?php endif; ?>
-
-        <?php echo $view['form']->rowIfExists($fields, 'mailer_transport', '<div class="row">'.$template.'</div>'); ?>
-
-        <div class="row">
-            <?php echo $view['form']->rowIfExists($fields, 'mailer_host', $template); ?>
-            <?php echo $view['form']->rowIfExists($fields, 'mailer_port', $template); ?>
-        </div>
-
-        <div class="row">
-            <?php echo $view['form']->rowIfExists($fields, 'mailer_encryption', $template); ?>
-            <?php echo $view['form']->rowIfExists($fields, 'mailer_auth_mode', $template); ?>
-        </div>
-
-        <div class="row">
-            <?php echo $view['form']->rowIfExists($fields, 'mailer_user', $template); ?>
-            <?php echo $view['form']->rowIfExists($fields, 'mailer_password', $template); ?>
-        </div>
-
-        <?php if (isset($fields['mailer_transport'])): ?>
-        <hr class="text-muted" />
-        <?php endif; ?>
-
-        <div class="row">
-            <?php echo $view['form']->rowIfExists($fields, 'mailer_spool_type', $template); ?>
-            <?php echo $view['form']->rowIfExists($fields, 'mailer_spool_path', $template); ?>
-        </div>
-
-        <div class="row">
-            <?php echo $view['form']->rowIfExists($fields, 'mailer_spool_msg_limit', $template); ?>
-            <?php echo $view['form']->rowIfExists($fields, 'mailer_spool_time_limit', $template); ?>
-        </div>
-
-        <div class="row">
-            <?php echo $view['form']->rowIfExists($fields, 'mailer_spool_recover_timeout', $template); ?>
-            <?php echo $view['form']->rowIfExists($fields, 'mailer_spool_clear_timeout', $template); ?>
-        </div>
-    </div>
-</div>
-<?php endif; ?>
+<?php // Email specific settings moved to EmailBundle to prevent confusion due to tab names ?>
 
 <?php if (count(array_intersect($fieldKeys, array('cookie_path')))): ?>
 <div class="panel panel-primary">
@@ -137,7 +86,7 @@ $template = '<div class="col-md-6">{content}</div>';
 </div>
 <?php endif; ?>
 
-<?php if (count(array_intersect($fieldKeys, array('trusted_hosts', 'trusted_proxies', 'ip_lookup_service', 'transifex_username')))): ?>
+<?php if (count(array_intersect($fieldKeys, array('trusted_hosts', 'trusted_proxies', 'ip_lookup_service', 'transifex_username', 'do_not_track_ips')))): ?>
 <div class="panel panel-primary">
     <div class="panel-heading">
         <h3 class="panel-title"><?php echo $view['translator']->trans('mautic.core.config.header.misc'); ?></h3>
@@ -155,11 +104,25 @@ $template = '<div class="col-md-6">{content}</div>';
         <div class="row">
             <?php echo $view['form']->rowIfExists($fields, 'ip_lookup_service', $template); ?>
             <?php echo $view['form']->rowIfExists($fields, 'ip_lookup_auth', $template); ?>
+            <div id="ip_lookup_config_container">
+            <?php echo $view['form']->rowIfExists($fields, 'ip_lookup_config', '<div class="col-md-12">{content}</div>'); ?>
+            </div>
         </div>
+        <div class="row">
+            <div class="col-sm-12">
+                <div class="small text-center" id="ip_lookup_attribution"><?php echo $ipLookupAttribution; ?></div>
+            </div>
+        </div>
+
+        <?php if (isset($fields['do_not_track_ips'])): ?>
+        <hr class="text-muted" />
+        <div class="row">
+            <?php echo $view['form']->rowIfExists($fields, 'do_not_track_ips', $template); ?>
+        </div>
+        <?php endif; ?>
 
         <?php if (isset($fields['transifex_username'])): ?>
         <hr class="text-muted" />
-
         <div class="row">
             <?php echo $view['form']->rowIfExists($fields, 'transifex_username', $template); ?>
             <?php echo $view['form']->rowIfExists($fields, 'transifex_password', $template); ?>

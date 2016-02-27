@@ -11,10 +11,11 @@ namespace Mautic\PageBundle\Controller;
 
 use Mautic\CoreBundle\Controller\FormController as CommonFormController;
 use Mautic\CoreBundle\Helper\TrackingPixelHelper;
+use Mautic\LeadBundle\EventListener\EmailSubscriber;
 use Mautic\PageBundle\Event\PageDisplayEvent;
 use Mautic\PageBundle\PageEvents;
+use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 
 /**
  * Class PublicController
@@ -23,46 +24,53 @@ class PublicController extends CommonFormController
 {
 
     /**
-     * @param string $slug1
-     * @param string $slug2
-     * @param string $slug3
+     * @param         $slug
+     * @param Request $request
      *
-     * @return Response|\Symfony\Component\HttpFoundation\RedirectResponse
-     * @throws AccessDeniedHttpException
-     * @throws \Symfony\Component\HttpKernel\Exception\NotFoundHttpException
+     * @return Response
+     * @throws \Exception
+     * @throws \Mautic\CoreBundle\Exception\FileNotFoundException
      */
-    public function indexAction($slug1, $slug2 = '', $slug3 = '')
+    public function indexAction($slug, Request $request)
     {
         //find the page
         /** @var \Mautic\PageBundle\Model\PageModel $model */
         $model      = $this->factory->getModel('page.page');
         $security   = $this->factory->getSecurity();
-        $translator = $this->get('translator');
-        $entity     = $model->getEntityBySlugs($slug1, $slug2, $slug3);
+        $entity     = $model->getEntityBySlugs($slug);
 
         if (!empty($entity)) {
             $published = $entity->isPublished();
 
             //make sure the page is published or deny access if not
             if ((!$published) && (!$security->hasEntityAccess('page:pages:viewown', 'page:pages:viewother', $entity->getCreatedBy()))) {
-                $model->hitPage($entity, $this->request, 401);
-                throw new AccessDeniedHttpException($translator->trans('mautic.core.url.error.401'));
+                //If the page has a redirect type, handle it
+                if ( $entity->getRedirectType() != null ) {
+                    return $this->redirect($entity->getRedirectUrl(), $entity->getRedirectType());
+                } else {
+                    $model->hitPage($entity, $this->request, 401);
+
+                    return $this->accessDenied();
+                }
             }
 
-            //make sure URLs match up
-            $url        = $model->generateUrl($entity, false);
-            $requestUri = $this->request->getRequestUri();
+            if ($request->attributes->has('ignore_mismatch')) {
+                //make sure URLs match up
+                $url        = $model->generateUrl($entity, false);
+                $requestUri = $this->request->getRequestUri();
 
-            //remove query
-            $query      = $this->request->getQueryString();
-            if (!empty($query)) {
-                $requestUri = str_replace("?{$query}", '', $url);
-            }
+                //remove query
+                $query      = $this->request->getQueryString();
+                if (!empty($query)) {
+                    $requestUri = str_replace("?{$query}", '', $url);
+                }
 
-            //redirect if they don't match
-            if ($requestUri != $url) {
-                $model->hitPage($entity, $this->request, 301);
-                return $this->redirect($url, 301);
+                //redirect if they don't match
+                if ($requestUri != $url) {
+                    $model->hitPage($entity, $this->request, 301);
+
+                    return $this->redirect($url, 301);
+                }
             }
 
             //check for variants
@@ -101,11 +109,13 @@ class PublicController extends CommonFormController
                         //check to see if this user has already been displayed a specific variant
                         $variantCookie = $this->request->cookies->get('mautic_page_' . $entity->getId());
 
-                        if (!empty($variantCookie) && isset($variants[$variantCookie])) {
-                            //if not the parent, show the specific variant already displayed to the visitor
-                            if ($variantCookie !== $entity->getId()) {
-                                $entity = $childrenVariant[$variantCookie];
-                            } //otherwise proceed with displaying parent
+                        if (!empty($variantCookie)) {
+                            if (isset($variants[$variantCookie])) {
+                                //if not the parent, show the specific variant already displayed to the visitor
+                                if ($variantCookie !== $entity->getId()) {
+                                    $entity = $childrenVariant[$variantCookie];
+                                } //otherwise proceed with displaying parent
+                            }
                         } else {
                             //add parent weight
                             $variants[$entity->getId()] = array(
@@ -223,33 +233,30 @@ class PublicController extends CommonFormController
                 }
             }
 
-            if ($entity->getContentMode() == 'builder') {
+            $template = $entity->getTemplate();
+            if (!empty($template)) {
                 //all the checks pass so display the content
-                $template   = $entity->getTemplate();
-                $slots      = $this->factory->getTheme($template)->getSlots('page');
-
-                $googleAnalytics = $this->factory->getParameter('google_analytics');
-
+                $slots    = $this->factory->getTheme($template)->getSlots('page');
                 $response = $this->render('MauticPageBundle::public.html.php', array(
                     'slots'           => $slots,
                     'content'         => $entity->getContent(),
                     'page'            => $entity,
                     'template'        => $template,
-                    'googleAnalytics' => $googleAnalytics,
                     'public'          => true
                 ));
 
                 $content = $response->getContent();
             } else {
                 $content = $entity->getCustomHtml();
+                $analytics = $this->factory->getParameter('google_analytics');
+                if (!empty($analytics)) {
+                    $content = str_replace('</head>', htmlspecialchars_decode($analytics) . "\n</head>", $content);
+                }
             }
 
-            $dispatcher = $this->get('event_dispatcher');
-            if ($dispatcher->hasListeners(PageEvents::PAGE_ON_DISPLAY)) {
-                $event = new PageDisplayEvent($content, $entity);
-                $dispatcher->dispatch(PageEvents::PAGE_ON_DISPLAY, $event);
-                $content = $event->getContent();
-            }
+            $event = new PageDisplayEvent($content, $entity);
+            $this->factory->getDispatcher()->dispatch(PageEvents::PAGE_ON_DISPLAY, $event);
+            $content = $event->getContent();
 
             $model->hitPage($entity, $this->request, 200);
 
@@ -257,7 +264,55 @@ class PublicController extends CommonFormController
         }
 
         $model->hitPage($entity, $this->request, 404);
-        throw $this->createNotFoundException($translator->trans('mautic.core.url.error.404'));
+
+        $this->notFound();
+    }
+
+    /**
+     * @param $id
+     *
+     * @return Response|\Symfony\Component\HttpKernel\Exception\NotFoundHttpException
+     * @throws \Exception
+     * @throws \Mautic\CoreBundle\Exception\FileNotFoundException
+     */
+    public function previewAction($id)
+    {
+        $model  = $this->factory->getModel('page');
+        $entity = $model->getEntity($id);
+
+        if ($entity === null || !$entity->isPublished(false)) {
+            $this->notFound();
+        }
+
+        $template = $entity->getTemplate();
+        if (!empty($template)) {
+            //all the checks pass so display the content
+            $slots    = $this->factory->getTheme($template)->getSlots('page');
+            $response = $this->render('MauticPageBundle::public.html.php', array(
+                'slots'           => $slots,
+                'content'         => $entity->getContent(),
+                'page'            => $entity,
+                'template'        => $template,
+                'public'          => true
+            ));
+
+            $content = $response->getContent();
+        } else {
+            $content = $entity->getCustomHtml();
+            $analytics = $this->factory->getParameter('google_analytics');
+            if (!empty($analytics)) {
+                $content = str_replace('</head>', htmlspecialchars_decode($analytics) . "\n</head>", $content);
+            }
+        }
+
+        $dispatcher = $this->get('event_dispatcher');
+        if ($dispatcher->hasListeners(PageEvents::PAGE_ON_DISPLAY)) {
+            $event = new PageDisplayEvent($content, $entity);
+            $dispatcher->dispatch(PageEvents::PAGE_ON_DISPLAY, $event);
+            $content = $event->getContent();
+        }
+
+        return new Response($content);
     }
 
     /**
@@ -265,14 +320,12 @@ class PublicController extends CommonFormController
      */
     public function trackingImageAction()
     {
-        $response = TrackingPixelHelper::getResponse($this->request);
-
         //Create page entry
         /** @var \Mautic\PageBundle\Model\PageModel $model */
         $model   = $this->factory->getModel('page');
         $model->hitPage(null, $this->request);
 
-        return $response;
+        return TrackingPixelHelper::getResponse($this->request);
     }
 
     /**
@@ -283,15 +336,41 @@ class PublicController extends CommonFormController
      */
     public function redirectAction($redirectId)
     {
+        /** @var \Mautic\PageBundle\Model\RedirectModel $redirectModel */
         $redirectModel = $this->factory->getModel('page.redirect');
-        $redirect      = $redirectModel->getRedirect($redirectId, false, false);
+        $redirect      = $redirectModel->getRedirectById($redirectId);
 
-        if (empty($redirect)) {
+        if (empty($redirect) || !$redirect->isPublished(false)) {
             throw $this->createNotFoundException($this->factory->getTranslator()->trans('mautic.core.url.error.404'));
         }
 
         $this->factory->getModel('page')->hitPage($redirect, $this->request);
 
-        return $this->redirect($redirect->getUrl());
+        $url = $redirect->getUrl();
+
+        // Ensure the URL does not have encoded ampersands
+        $url = str_replace('&amp;', '&', $url);
+
+        // Get query string
+        $query = $this->request->query->all();
+
+        // Unset the clickthrough
+        unset($query['ct']);
+
+        // Tak on anything left to the URL
+        if (count($query)) {
+            $url .= (strpos($url, '?') !== false) ? '&' : '?';
+            $url .= http_build_query($query);
+        }
+
+        // Search replace lead fields in the URL
+        /** @var \Mautic\LeadBundle\Model\LeadModel $leadModel */
+        $leadModel = $this->factory->getModel('lead');
+        $lead      = $leadModel->getCurrentLead();
+        $fields    = $lead->getFields();
+        $leadArray = $leadModel->flattenFields($fields);
+        $url       = EmailSubscriber::findLeadTokens($url, $leadArray, true);
+
+        return $this->redirect($url);
     }
 }

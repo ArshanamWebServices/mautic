@@ -41,17 +41,19 @@ class StatRepository extends CommonRepository
             ->setParameter('hash', $trackingHash);
         $result = $q->getQuery()->getResult();
 
-        return ($result != null) ? $result[0] : $result;
+        return (!empty($result)) ? $result[0] : null;
     }
 
     /**
-     * @param        $emailId
-     * @param string $listId
+     * @param      $emailId
+     * @param null $listId
+     *
+     * @return array
      */
     public function getSentStats($emailId, $listId = null)
     {
         $q = $this->_em->getConnection()->createQueryBuilder();
-        $q->select('s.*')
+        $q->select('s.lead_id')
             ->from(MAUTIC_TABLE_PREFIX.'email_stats', 's')
             ->where('s.email_id = :email')
             ->setParameter('email', $emailId);
@@ -66,54 +68,79 @@ class StatRepository extends CommonRepository
         //index by lead
         $stats = array();
         foreach ($result as $r) {
-            $stats[$r['lead_id']] = $r;
+            $stats[$r['lead_id']] = $r['lead_id'];
         }
+
+        unset($result);
 
         return $stats;
     }
 
     /**
-     * @param $emailId
-     * @param $listId
+     * @param int|array $emailIds
+     * @param int       $listId
+     *
+     * @return int
      */
-    public function getSentCount($emailId = 0, $listId = 0)
+    public function getSentCount($emailIds = null, $listId = null)
     {
         $q = $this->_em->getConnection()->createQueryBuilder();
 
-        $q->select('count(*) as sentCount')
+        $q->select('count(s.id) as sent_count')
             ->from(MAUTIC_TABLE_PREFIX.'email_stats', 's');
 
-        if ($emailId) {
-            $q->where('email_id = ' . $emailId);
+        if ($emailIds) {
+            if (!is_array($emailIds)) {
+                $emailIds = array((int) $emailIds);
+            }
+            $q->where(
+                $q->expr()->in('s.email_id', $emailIds)
+            );
         }
 
         if ($listId) {
-            $q->andWhere('list_id = ' . $listId);
+            $q->andWhere('s.list_id = ' . (int) $listId);
         }
 
-        $q->andWhere('is_failed = 0');
+        $q->andWhere('s.is_failed = :false')
+            ->setParameter('false', false, 'boolean');
 
         $results = $q->execute()->fetchAll();
 
-        return (isset($results[0])) ? $results[0]['sentCount'] : 0;
+        return (isset($results[0])) ? $results[0]['sent_count'] : 0;
     }
 
     /**
-     * @param $emailId
-     * @param $listId
+     * @param array|int $emailIds
+     * @param int       $listId
+     *
+     * @return int
      */
-    public function getReadCount($emailId, $listId)
+    public function getReadCount($emailIds = null, $listId = null)
     {
         $q = $this->_em->getConnection()->createQueryBuilder();
 
-        $q->select('count(*) as readCount')
-            ->from(MAUTIC_TABLE_PREFIX.'email_stats', 's')
-            ->where('email_id = ' . $emailId)
-            ->andWhere('list_id = ' . $listId)
-            ->andWhere('is_read = 1');
+        $q->select('count(s.id) as read_count')
+            ->from(MAUTIC_TABLE_PREFIX.'email_stats', 's');
+
+        if ($emailIds) {
+            if (!is_array($emailIds)) {
+                $emailIds = array((int) $emailIds);
+            }
+            $q->where(
+                $q->expr()->in('s.email_id', $emailIds)
+            );
+        }
+
+        if ($listId) {
+            $q->andWhere('s.list_id = ' . (int) $listId);
+        }
+
+        $q->andWhere('is_read = :true')
+            ->setParameter('true', true, 'boolean');
         $results = $q->execute()->fetchAll();
 
-        return (isset($results[0])) ? $results[0]['readCount'] : 0;
+        return (isset($results[0])) ? $results[0]['read_count'] : 0;
     }
 
     /**
@@ -127,16 +154,20 @@ class StatRepository extends CommonRepository
         $inIds = (!is_array($emailIds)) ? array($emailIds) : $emailIds;
 
         $sq = $this->_em->getConnection()->createQueryBuilder();
-        $sq->select('e.email_id, count(*) as theCount')
+        $sq->select('e.email_id, count(e.id) as the_count')
             ->from(MAUTIC_TABLE_PREFIX.'email_stats', 'e')
-            ->where('e.is_failed = 0')
-            ->andWhere($sq->expr()->in('e.email_id', $inIds));
+            ->where(
+                $sq->expr()->andX(
+                    $sq->expr()->eq('e.is_failed', ':false'),
+                    $sq->expr()->in('e.email_id', $inIds)
+                )
+            )->setParameter('false', false, 'boolean');
 
         if ($fromDate !== null) {
             //make sure the date is UTC
             $dt = new DateTimeHelper($fromDate);
             $sq->andWhere(
-                $sq->expr()->gte('e.date_read', $sq->expr()->literal($dt->toUtcString()))
+                $sq->expr()->gte('e.date_sent', $sq->expr()->literal($dt->toUtcString()))
             );
         }
         $sq->groupBy('e.email_id');
@@ -155,18 +186,19 @@ class StatRepository extends CommonRepository
 
         foreach ($totalCounts as $t) {
             if ($t['email_id'] != null) {
-                $return[$t['email_id']]['totalCount'] = (int) $t['theCount'];
+                $return[$t['email_id']]['totalCount'] = (int) $t['the_count'];
             }
         }
 
         //now get a read count
-        $sq->andWhere('e.is_read = 1');
+        $sq->andWhere('e.is_read = :true')
+            ->setParameter('true', true, 'boolean');
         $readCounts = $sq->execute()->fetchAll();
 
         foreach ($readCounts as $r) {
-            $return[$r['email_id']]['readCount'] = (int) $r['theCount'];
+            $return[$r['email_id']]['readCount'] = (int) $r['the_count'];
             $return[$r['email_id']]['readRate']  = ($return[$r['email_id']]['totalCount']) ?
-                round(($r['theCount'] / $return[$r['email_id']]['totalCount']) * 100, 2) :
+                round(($r['the_count'] / $return[$r['email_id']]['totalCount']) * 100, 2) :
                 0;
         }
 
@@ -174,21 +206,37 @@ class StatRepository extends CommonRepository
     }
 
     /**
-     * @param $emailId
-     * @param $listId
+     * @param array|int $emailIds
+     * @param int       $listId
+     *
+     * @return int
      */
-    public function getFailedCount($emailId, $listId)
+    public function getFailedCount($emailIds = null, $listId = null)
     {
         $q = $this->_em->getConnection()->createQueryBuilder();
 
-        $q->select('count(*) as failedCount')
-            ->from(MAUTIC_TABLE_PREFIX.'email_stats', 's')
-            ->where('email_id = ' . $emailId)
-            ->andWhere('list_id = ' . $listId)
-            ->andWhere('is_failed = 1');
+        $q->select('count(s.id) as failed_count')
+            ->from(MAUTIC_TABLE_PREFIX.'email_stats', 's');
+
+        if ($emailIds) {
+            if (!is_array($emailIds)) {
+                $emailIds = array((int) $emailIds);
+            }
+            $q->where(
+                $q->expr()->in('s.email_id', $emailIds)
+            );
+        }
+
+        if ($listId) {
+            $q->andWhere('s.list_id = ' . (int) $listId);
+        }
+
+        $q->andWhere('is_failed = :true')
+            ->setParameter('true', true, 'boolean');
+
         $results = $q->execute()->fetchAll();
 
-        return (isset($results[0])) ? $results[0]['failedCount'] : 0;
+        return (isset($results[0])) ? $results[0]['failed_count'] : 0;
     }
 
     /**
@@ -203,10 +251,17 @@ class StatRepository extends CommonRepository
      */
     public function getLeadStats($leadId, array $options = array())
     {
-        $query = $this->createQueryBuilder('s')
-            ->select('IDENTITY(s.email) AS email_id, s.dateRead, s.dateSent, e.subject, e.plainText')
+        $query = $this->createQueryBuilder('s');
+
+        $query->select('IDENTITY(s.email) AS email_id, s.id, s.dateRead, s.dateSent, e.name, e.subject, s.isRead, s.isFailed, s.viewedInBrowser, s.retryCount, IDENTITY(s.list) AS list_id, l.name as list_name, s.trackingHash as idHash, s.openDetails, ec.subject as storedSubject')
             ->leftJoin('MauticEmailBundle:Email', 'e', 'WITH', 'e.id = s.email')
-            ->where('s.lead = ' . $leadId);
+            ->leftJoin('MauticLeadBundle:LeadList', 'l', 'WITH', 'l.id = s.list')
+            ->leftJoin('MauticEmailBundle:Copy', 'ec', 'WITH', 'ec.id = s.storedCopy')
+            ->where(
+                $query->expr()->andX(
+                    $query->expr()->eq('IDENTITY(s.lead)', $leadId),
+                    $query->expr()->eq('s.isFailed', ':false'))
+            )->setParameter('false', false, 'boolean');
 
         if (!empty($options['ipIds'])) {
             $query->orWhere('s.ipAddress IN (' . implode(',', $options['ipIds']) . ')');
@@ -215,11 +270,22 @@ class StatRepository extends CommonRepository
         if (isset($options['filters']['search']) && $options['filters']['search']) {
             $query->andWhere($query->expr()->orX(
                 $query->expr()->like('e.subject', $query->expr()->literal('%' . $options['filters']['search'] . '%')),
-                $query->expr()->like('e.plainText', $query->expr()->literal('%' . $options['filters']['search'] . '%'))
+                $query->expr()->like('e.name', $query->expr()->literal('%' . $options['filters']['search'] . '%'))
             ));
         }
 
-        return $query->getQuery()->getArrayResult();
+        $stats = $query->getQuery()->getArrayResult();
+
+        foreach ($stats as &$stat) {
+            $dateSent = new DateTimeHelper($stat['dateSent']);
+            if (!empty($stat['dateSent']) && !empty($stat['dateRead'])) {
+                $stat['timeToRead'] = $dateSent->getDiff($stat['dateRead']);
+            } else {
+                $stat['timeToRead'] = false;
+            }
+        }
+
+        return $stats;
     }
 
     /**
@@ -235,12 +301,12 @@ class StatRepository extends CommonRepository
     public function getIgnoredReadFailed($query = null, $args = array())
     {
         if (!$query) {
-            $query = $this->_em->getConnection()->createQueryBuilder();
+            $query = $this->_em->getConnection()->createQueryBuilder()
+                ->from(MAUTIC_TABLE_PREFIX.'email_stats', 'es')
+                ->leftJoin('es', MAUTIC_TABLE_PREFIX.'emails', 'e', 'es.email_id = e.id');
         }
 
-        $query->select('count(es.id) as sent, sum(es.is_read) as "read", sum(es.is_failed) as failed')
-            ->from(MAUTIC_TABLE_PREFIX.'email_stats', 'es')
-            ->leftJoin('es', MAUTIC_TABLE_PREFIX.'emails', 'e', 'es.email_id = e.id');
+        $query->select('count(es.id) as sent, count(CASE WHEN es.is_read THEN 1 ELSE null END) as "read", count(CASE WHEN es.is_failed THEN 1 ELSE null END) as failed');
 
         if (isset($args['source'])) {
             $query->andWhere($query->expr()->eq('es.source', $query->expr()->literal($args['source'])));
@@ -269,8 +335,7 @@ class StatRepository extends CommonRepository
      */
     public function getMostEmails($query, $limit = 10, $offset = 0)
     {
-        $query->from(MAUTIC_TABLE_PREFIX.'email_stats', 'es')
-            ->leftJoin('es', MAUTIC_TABLE_PREFIX.'emails', 'e', 'es.email_id = e.id')
+        $query
             ->setMaxResults($limit)
             ->setFirstResult($offset);
 
@@ -288,10 +353,14 @@ class StatRepository extends CommonRepository
     public function getSentCounts($emailIds = array(), \DateTime $fromDate = null)
     {
         $q = $this->_em->getConnection()->createQueryBuilder();
-        $q->select('e.email_id, count(*) as sentCount')
+        $q->select('e.email_id, count(e.id) as sentcount')
             ->from(MAUTIC_TABLE_PREFIX.'email_stats', 'e')
-            ->where('e.is_failed = 0')
-            ->andWhere($q->expr()->in('e.email_id', $emailIds));
+            ->where(
+                $q->expr()->andX(
+                    $q->expr()->in('e.email_id', $emailIds),
+                    $q->expr()->eq('e.is_failed', ':false')
+                )
+            )->setParameter('false', false, 'boolean');
 
         if ($fromDate !== null) {
             //make sure the date is UTC
@@ -308,9 +377,89 @@ class StatRepository extends CommonRepository
         $counts = array();
 
         foreach ($results as $r) {
-            $counts[$r['email_id']] = $r['sentCount'];
+            $counts[$r['email_id']] = $r['sentcount'];
         }
 
         return $counts;
+    }
+
+    /**
+     * Updates lead ID (e.g. after a lead merge)
+     *
+     * @param $fromLeadId
+     * @param $toLeadId
+     */
+    public function updateLead($fromLeadId, $toLeadId)
+    {
+        $q = $this->_em->getConnection()->createQueryBuilder();
+        $q->update(MAUTIC_TABLE_PREFIX . 'email_stats')
+            ->set('lead_id', (int) $toLeadId)
+            ->where('lead_id = ' . (int) $fromLeadId)
+            ->execute();
+    }
+
+    /**
+     * Delete a stat
+     *
+     * @param $id
+     */
+    public function deleteStat($id)
+    {
+        $this->_em->getConnection()->delete(MAUTIC_TABLE_PREFIX.'email_stats', array('id' => (int) $id));
+    }
+
+    /**
+     * Fetch stats for some period of time.
+     *
+     * @param $emailIds
+     * @param $fromDate
+     * @param $state
+     *
+     * @return mixed
+     * @throws \Doctrine\ORM\NoResultException
+     * @throws \Doctrine\ORM\NonUniqueResultException
+     */
+    public function getEmailStats($emailIds, $fromDate, $state)
+    {
+        if (!is_array($emailIds)) {
+            $emailIds = array((int) $emailIds);
+        }
+
+        // Load points for selected period
+        $q = $this->createQueryBuilder('s');
+
+        $dateColumn = ($state == 'sent') ? 'dateSent' : 'dateRead';
+
+        $q->select('s.id, 1 as data, s.'.$dateColumn.' as date');
+
+        $q->where(
+            $q->expr()->in('IDENTITY(s.email)', ':emails')
+        )
+            ->setParameter('emails', $emailIds);
+
+        if ($state != 'sent') {
+            $q->andWhere(
+                $q->expr()->eq('s.is'.ucfirst($state), ':true')
+            )
+                ->setParameter('true', true, 'boolean');
+        }
+
+        $q->andwhere(
+            $q->expr()->gte('s.'.$dateColumn, ':date')
+        )
+            ->setParameter('date', $fromDate)
+            ->orderBy('s.'.$dateColumn, 'ASC');
+
+        $stats = $q->getQuery()->getArrayResult();
+
+        return $stats;
+    }
+
+    /**
+     * @return string
+     */
+    public function getTableAlias()
+    {
+        return 's';
     }
 }

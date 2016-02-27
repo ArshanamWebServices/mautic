@@ -72,7 +72,7 @@ class NoteType extends AbstractType
         $data = ($dt == null) ? $this->dateHelper->getDateTime() : $dt;
 
         $builder->add('dateTime', 'datetime', array(
-            'label'      => 'mautic.lead.note.form.dateadded',
+            'label'      => 'mautic.core.date.added',
             'label_attr' => array('class' => 'control-label'),
             'widget'     => 'single_text',
             'attr'       => array(
@@ -85,9 +85,8 @@ class NoteType extends AbstractType
         ));
 
         $builder->add('buttons', 'form_buttons', array(
-            'container_class' => 'lead-note-buttons',
-            'apply_text'      => false,
-            'save_text'       => 'mautic.core.form.save'
+            'apply_text' => false,
+            'save_text'  => 'mautic.core.form.save'
         ));
 
         if (!empty($options["action"])) {

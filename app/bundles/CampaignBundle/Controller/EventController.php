@@ -15,7 +15,7 @@ use Symfony\Component\HttpFoundation\JsonResponse;
 
 class EventController extends CommonFormController
 {
-    private $supportedEventTypes = array('decision', 'systemaction', 'action');
+    private $supportedEventTypes = array('decision', 'action', 'condition');
 
     /**
      * Generates new form and processes post data
@@ -103,10 +103,16 @@ class EventController extends CommonFormController
             $closeModal = true;
         } else {
             $closeModal                = false;
-            $formView                  = $this->setFormTheme($form, 'MauticCampaignBundle:Campaign:index.html.php', 'MauticCampaignBundle:FormTheme\Event');
-            $viewParams['form']        = $formView;
-            $header                    = $event['settings']['label'];
-            $viewParams['eventHeader'] = $this->get('translator')->trans($header);
+            $formThemes                = array('MauticCampaignBundle:FormTheme\Event');
+            if (isset($event['settings']['formTheme'])) {
+                $formThemes[] = $event['settings']['formTheme'];
+            }
+
+            $viewParams['form']        = $this->setFormTheme($form, 'MauticCampaignBundle:Campaign:index.html.php', $formThemes);;
+            $viewParams['eventHeader'] = $this->get('translator')->trans($event['settings']['label']);
+            $viewParams['eventDescription'] = (!empty($event['settings']['description'])) ? $this->get('translator')->trans(
+                $event['settings']['description']
+            ) : '';
         }
 
         $passthroughVars = array(
@@ -131,6 +137,22 @@ class EventController extends CommonFormController
                 'campaignId' => $campaignId
             ));
             $passthroughVars['eventType'] = $eventType;
+
+            $translator = $this->factory->getTranslator();
+            if ($event['triggerMode'] == 'interval') {
+                $passthroughVars['label'] = $translator->trans('mautic.campaign.connection.trigger.interval.label', array(
+                    '%number%' => $event['triggerInterval'],
+                    '%unit%'   => $translator->transChoice('mautic.campaign.event.intervalunit.' . $event['triggerIntervalUnit'], $event['triggerInterval'])
+                ));
+            } elseif ($event['triggerMode'] == 'date') {
+                /** @var \Mautic\CoreBundle\Templating\Helper\DateHelper $dh */
+                $dh                       = $this->factory->getHelper('template.date');
+                $passthroughVars['label'] = $translator->trans('mautic.campaign.connection.trigger.date.label', array(
+                    '%full%' => $dh->toFull($event['triggerDate']),
+                    '%time%' => $dh->toTime($event['triggerDate']),
+                    '%date%' => $dh->toShort($event['triggerDate'])
+                ));
+            }
         }
 
         if ($closeModal) {
@@ -208,6 +230,7 @@ class EventController extends CommonFormController
                             $event['name'] = $this->get('translator')->trans($event['settings']['label']);
                         }
                         $modifiedEvents[$objectId] = $event;
+
                         $session->set('mautic.campaign.' . $campaignId . '.events.modified', $modifiedEvents);
                     } else {
                         $success = 0;
@@ -219,11 +242,16 @@ class EventController extends CommonFormController
             if ($cancelled || $valid) {
                 $closeModal = true;
             } else {
-                $closeModal                = false;
-                $formView                  = $this->setFormTheme($form, 'MauticCampaignBundle:Campaign:index.html.php', 'MauticCampaignBundle:EventForm');
-                $viewParams['form']        = $formView;
-                $header                    = $event['settings']['label'];
-                $viewParams['eventHeader'] = $this->get('translator')->trans($header);
+                $closeModal = false;
+                $formThemes = array('MauticCampaignBundle:FormTheme\Event');
+                if (isset($event['settings']['formTheme'])) {
+                    $formThemes[] = $event['settings']['formTheme'];
+                }
+                $viewParams['form'] = $this->setFormTheme($form, 'MauticCampaignBundle:Campaign:index.html.php', $formThemes);;
+                $viewParams['eventHeader'] = $this->get('translator')->trans($event['settings']['label']);
+                $viewParams['eventDescription'] = (!empty($event['settings']['description'])) ? $this->get('translator')->trans(
+                    $event['settings']['description']
+                ) : '';
             }
 
             $passthroughVars = array(
@@ -253,7 +281,6 @@ class EventController extends CommonFormController
                     $passthroughVars['eventType']  = $eventType;
 
                     $translator = $this->factory->getTranslator();
-
                     if ($event['triggerMode'] == 'interval') {
                         $passthroughVars['label'] = $translator->trans('mautic.campaign.connection.trigger.interval.label', array(
                             '%number%' => $event['triggerInterval'],
@@ -261,7 +288,7 @@ class EventController extends CommonFormController
                         ));
                     } elseif ($event['triggerMode'] == 'date') {
                         /** @var \Mautic\CoreBundle\Templating\Helper\DateHelper $dh */
-                        $dh                       = $this->container->get('mautic.helper.template.date');
+                        $dh                       = $this->factory->getHelper('template.date');
                         $passthroughVars['label'] = $translator->trans('mautic.campaign.connection.trigger.date.label', array(
                             '%full%' => $dh->toFull($event['triggerDate']),
                             '%time%' => $dh->toTime($event['triggerDate']),
@@ -272,7 +299,6 @@ class EventController extends CommonFormController
                 //just close the modal
                 $passthroughVars['closeModal'] = 1;
                 $response                      = new JsonResponse($passthroughVars);
-                $response->headers->set('Content-Length', strlen($response->getContent()));
 
                 return $response;
             } else {
@@ -317,7 +343,7 @@ class EventController extends CommonFormController
             $events            = $this->factory->getModel('campaign')->getEvents();
             $event['settings'] = $events[$event['eventType']][$event['type']];
 
-            //add the field to the delete list
+            // Add the field to the delete list
             if (!in_array($objectId, $deletedEvents)) {
                 $deletedEvents[] = $objectId;
                 $session->set('mautic.campaign.' . $campaignId . '.events.deleted', $deletedEvents);
@@ -336,7 +362,6 @@ class EventController extends CommonFormController
         }
 
         $response = new JsonResponse($dataArray);
-        $response->headers->set('Content-Length', strlen($response->getContent()));
 
         return $response;
     }

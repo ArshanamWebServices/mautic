@@ -4,7 +4,7 @@ Mautic Introduction
 <br /><br />
 ## Getting Started
 <p>
-	This is a simple 3 step installation process. You'll want to make sure you already have <a href="http://getcomposer.org">Composer</a> available on your computer as this is a development release and you'll need to use Composer to download the vendor packages. 
+	This is a simple 3 step installation process. You'll want to make sure you already have <a href="http://getcomposer.org">Composer</a> available on your computer as this is a development release and you'll need to use Composer to download the vendor packages.
 </p>
 <table width="100%" border="0">
 	<tr>
@@ -34,6 +34,41 @@ Mautic Introduction
 	<strong>Get stuck?</strong> No problem. Check out the <a href="https://www.mautic.org/community">Mautic community</a> for help and answers.
 </em>
 <br />
+<h2>Disclaimer</h2>
+<p>Installing from source is only recommended if you are comfortable using the command line. You'll be required to use various CLI commands to get Mautic working and to keep it working. If the source and/or database schema gets out of sync with Mautic's releases, the release updater may not work and will require manual updates.</p>
+<p><em>Also note that the source outside <a href="https://github.com/mautic/mautic/releases">a tagged release</a> should be considered "alpha" and may contain bugs, cause unexpected results, data corruption or loss, and is not recommended for use in a production environment. Use at your own risk.</em></p>
+<p>If you prefer, there are packaged downloads ready for install at <a href="https://www.mautic.org/download">https://www.mautic.org/download</a>.</p>
+
+<h2>Keeping Up-To-Date</h2>
+
+<h3>Source Files</h3>
+
+<p>Each time you update Mautic's source after the initial setup/installation via a new checkout, download, git pull, etc; you will need to clear the cache. To do so, run the following command:</p>
+
+    $ cd /your/mautic/directory
+    $ php app/console cache:clear --env=prod
+
+<p>(Note that if you are accessing Mautic through the dev environment (via index_dev.php), you would need to drop the <code>--env=prod</code> from the command).</p>
+
+<h3>Database Schema</h3>
+
+<p>Before running these commands, please make a backup of your database.</p>
+
+<p>If updating from <a href="https://github.com/mautic/mautic/releases">a tagged release</a> to <a href="https://github.com/mautic/mautic/releases">a tagged release</a>, schema changes will be included in a migrations file. To apply the changes, run</p>
+
+    $ php app/console doctrine:migrations:migrate --env=prod
+
+<p>If you are updating to the latest source (remember this is alpha), first run</p>
+
+    $ php app/console doctrine:schema:update --env=prod --dump-sql
+
+<p>This will list out the queries Doctrine wants to execute in order to get the schema up-to-date (no queries are actually executed). Review the queries to ensure there is nothing detrimental to your data. If you have doubts about a query, submit an issue here and we'll verify it.</p>
+
+<p>If you're satisfied with the queries, execute them with</p>
+
+    $ php app/console doctrine:schema:update --env=prod --force
+
+<p>Your schema should now be up-to-date with the source.</p>
 <h2>Usage</h2>
 <p>
 	Learning how to use marketing automation can be challenging. The first step is to understand what marketing automation is and how it can help your business be more successful. This quick usage outline is not meant to be comprehensive but will outline a few key areas of Mautic and how to use each of them.
@@ -74,14 +109,14 @@ Mautic Introduction
 
 <h3>2. Connecting</h3>
 <p>
-	The next step in the marketing automation process is connecting with your known visitors. These known visitors are your leads (You may call your potential clients something different, for simplicity they are called leads in these docs). Connecting with your leads is important in establishing a relationship and nurturing them along the sales cycle. 
+	The next step in the marketing automation process is connecting with your known visitors. These known visitors are your leads (You may call your potential clients something different, for simplicity they are called leads in these docs). Connecting with your leads is important in establishing a relationship and nurturing them along the sales cycle.
 </p>
 <p>
 	This <strong>nurturing</strong> can be for any purpose you desire. You may wish to demonstrate your knowledge of a subject, encourage your leads to become involved, or generate a sale and become a customer.
 </p>
 <h4>Methods for Connecting</h4>
 <p>
-	There are several ways to connect with your leads. The three most common are <strong>emails</strong>, <strong>social media</strong>, and <strong>landing pages</strong>. 
+	There are several ways to connect with your leads. The three most common are <strong>emails</strong>, <strong>social media</strong>, and <strong>landing pages</strong>.
 </p>
 <p><strong>Emails</strong> are by far the most common way to connect with leads. These are tracked and monitored by Mautic for who opens the email, what links are clicked within that email, and what emails bounce (never reach the recipient).</p>
 <p><strong>Social media</strong> is quickly becoming a more popular way for connecting with leads. Mautic helps you monitor the social profiles of your leads and can be used to interact with them through their preferred network.</p>
@@ -96,7 +131,7 @@ Mautic Introduction
 
 <p>This example demonstrates several uses of automation. First, the visitor is <em>automatically</em> moved from anonymous to known status. Second, the visitor is <em>automatically</em> added to a particular campaign. Lastly the visitor is sent an email <em>automatically</em> as a new lead.</p>
 
-<p>There are many more ways in which automation can be used throughout Mautic to improve efficiency and reduce the time you spend connecting with your leads. As mentioned earlier, refer to <a href="https://docs.mautic.org">https://docs.mautic.org</a> for more details. 
+<p>There are many more ways in which automation can be used throughout Mautic to improve efficiency and reduce the time you spend connecting with your leads. As mentioned earlier, refer to <a href="https://docs.mautic.org">https://docs.mautic.org</a> for more details.
 </p>
 
 <h2>Customizing</h2>
@@ -135,6 +170,35 @@ Mautic Introduction
 
 > <em>More detailed information regarding modifications and customizations as well as deeper tutorials on the above features can be found in the developer documentation when it is released.</em>
 
+## How to test a pull request
+
+Everyone can test submitted features and bug fixes. No programming skills are required. All you have to do is to follow the steps below.
+
+### Requirements
+
+1. Mautic uses Git as a version control system. Download and install git for your OS from https://git-scm.com/.
+2. Install a server, PHP and MySql/Posgres to be able to run Mautic locally. Easy option is [_AMP package for your OS](https://en.wikipedia.org/wiki/List_of_Apache%E2%80%93MySQL%E2%80%93PHP_packages).
+3. Install [Composer](https://getcomposer.org/), the dependency manager for PHP.
+
+### Install the latest GitHub version
+
+1. Open a Terminal/Console window.
+2. Change directory to the server root (i.e. `cd /var/www` if your local server root is at /var/www).
+3. Clone the repository (`git clone https://github.com/mautic/mautic.git`)
+4. The **mautic** directory should appear in the server root. Change directory to mautic directory (`cd mautic`).
+5. Install dependencies (`composer install`).
+6. Visit Mautic in a browser (probably at http://localhost/mautic) and follow installation steps.
+
+### Test a pull request (PR)
+
+1. [Select a PR](https://github.com/mautic/mautic/pulls) to test.
+2. Read the description and steps to test. If it's a bug fix, follow the steps if you'll be able to recreate the issue.
+3. Use development environment for testing. To do that, add `index_dev.php` after the Mautic URL. Eg. `http://localhost/mautic/index_dev.php/s/`
+3. [Apply the PR](https://help.github.com/articles/checking-out-pull-requests-locally/#modifying-an-inactive-pull-request-locally)
+4. Clear cache for development environment (`app/console cache:clear -e dev`).
+5. Follow the steps from the PR description again to see if the result is as described.
+6. Write a comment how the test went. If there is a problem, provide as many information as possible including error log messages.
+
 <h2>FAQ and Contact Information</h2>
 <p>Marketing automation has historically been a difficult tool to implement in a business. The Mautic community is a rich environment for you to learn from others and share your knowledge as well. Open source means more than open code. Open source is providing equality for all and a chance to improve. If you have questions then the Mautic community can help provide the answers. </p>
 
@@ -143,7 +207,11 @@ Mautic Introduction
 <h3>Contact Info</h3>
 <ul>
 	<li><a href="https://www.mautic.org">https://www.mautic.org</a></li>
-	<li><a href="https://twitter.com/trymautic">@trymautic</a> [Twitter]</li>
-	<li><a href="https://facebook/trymautic">@trymautic</a> [Facebook]</li>
+	<li><a href="https://twitter.com/mautic">@mautic</a> [Twitter]</li>
+	<li><a href="https://facebook.com/trymautic">@trymautic</a> [Facebook]</li>
 	<li><a href="https://plus.google.com/+MauticOrg">+MauticOrg</a> [Google+]</li>
 </ul>
+
+<h3>Developers</h3>
+<p>We love testing our user interface on as many platforms as possible (even those browsers we prefer to not mention). In order to help us do this we use and recommend BrowserStack.</p>
+<img src="https://www.mautic.org/media/browserstack_small.png" />

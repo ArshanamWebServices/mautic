@@ -12,26 +12,31 @@ if ($tmpl == 'index'):
 endif;
 ?>
 
-<div class="table-responsive">
+<div class="table-responsive panel-collapse pull out page-list">
     <table class="table table-hover table-striped table-bordered client-list">
         <thead>
         <tr>
-            <th class="col-client-actions"></th>
             <?php
+            echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
+                'checkall' => 'true',
+                'target'   => '.client-list'
+            ));
+
             echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                 'sessionVar' => 'client',
                 'orderBy'    => 'c.name',
-                'text'       => 'mautic.api.client.thead.name',
+                'text'       => 'mautic.core.name',
                 'default'    => true,
                 'class'      => 'col-client-name'
             ));
             ?>
             <th class="visible-md visible-lg col-client-publicid"><?php echo $view['translator']->trans('mautic.api.client.thead.publicid'); ?></th>
+            <th class="visible-md visible-lg col-client-secret"><?php echo $view['translator']->trans('mautic.api.client.thead.secret'); ?></th>
             <?php
             echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                 'sessionVar' => 'client',
                 'orderBy'    => 'c.id',
-                'text'       => 'mautic.api.client.thead.id',
+                'text'       => 'mautic.core.id',
                 'class'      => 'visible-md visible-lg col-client-id'
             ));
             ?>
@@ -58,13 +63,17 @@ endif;
                     <?php echo $item->getName(); ?>
                 </td>
                 <td class="visible-md visible-lg">
-                    <?php echo $item->getPublicId(); ?>
+                    <input onclick="this.setSelectionRange(0, this.value.length);" type="text" class="form-control" readonly value="<?php echo $item->getPublicId(); ?>" />
+                </td>
+                <td class="visible-md visible-lg">
+                    <input onclick="this.setSelectionRange(0, this.value.length);" type="text" class="form-control" readonly value="<?php echo $item->getSecret(); ?>" />
                 </td>
                 <td class="visible-md visible-lg"><?php echo $item->getId(); ?></td>
             </tr>
         <?php endforeach; ?>
         </tbody>
     </table>
+    <div class="panel-footer">
     <?php echo $view->render('MauticCoreBundle:Helper:pagination.html.php', array(
         "totalItems" => count($items),
         "page"       => $page,
@@ -73,4 +82,5 @@ endif;
         'sessionVar' => 'client',
         'tmpl'       => $tmpl
     )); ?>
+    </div>
 </div>

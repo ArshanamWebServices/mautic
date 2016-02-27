@@ -10,6 +10,7 @@
 namespace Mautic\PointBundle\Controller;
 
 use Mautic\CoreBundle\Controller\FormController;
+use Mautic\PointBundle\Entity\Point;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -66,7 +67,7 @@ class PointController extends FormController
 
         $count = count($points);
         if ($count && $count < ($start + 1)) {
-            $lastPage = ($count === 1) ? 1 : (floor($limit / $count)) ?: 1;
+            $lastPage = ($count === 1) ? 1 : (ceil($count / $limit)) ?: 1;
             $this->factory->getSession()->set('mautic.point.page', $lastPage);
             $returnUrl   = $this->generateUrl('mautic_point_index', array('page' => $lastPage));
 
@@ -111,12 +112,18 @@ class PointController extends FormController
     /**
      * Generates new form and processes post data
      *
+     * @param  \Mautic\PointBundle\Entity\Point $entity
+     *
      * @return JsonResponse|\Symfony\Component\HttpFoundation\RedirectResponse|Response
      */
-    public function newAction()
+    public function newAction($entity = null)
     {
         $model   = $this->factory->getModel('point');
-        $entity  = $model->getEntity();
+
+        if (!($entity instanceof Point)) {
+            /** @var \Mautic\PointBundle\Entity\Point $entity */
+            $entity  = $model->getEntity();
+        }
 
         if (!$this->factory->getSecurity()->isGranted('point:points:create')) {
             return $this->accessDenied();
@@ -178,11 +185,16 @@ class PointController extends FormController
             }
         }
 
+        $themes = array('MauticPointBundle:FormTheme\Action');
+        if ($actionType && !empty($actions['actions'][$actionType]['formTheme'])) {
+            $themes[] = $actions['actions'][$actionType]['formTheme'];
+        }
+
         return $this->delegateView(array(
             'viewParameters'  => array(
                 'tmpl'           => $this->request->isXmlHttpRequest() ? $this->request->get('tmpl', 'index') : 'index',
                 'entity'         => $entity,
-                'form'           => $this->setFormTheme($form, 'MauticPointBundle:Point:form.html.php', 'MauticPointBundle:FormTheme\Action'),
+                'form'           => $this->setFormTheme($form, 'MauticPointBundle:Point:form.html.php', $themes),
                 'actions'        => $actions['actions']
             ),
             'contentTemplate' => 'MauticPointBundle:Point:form.html.php',
@@ -249,8 +261,7 @@ class PointController extends FormController
             return $this->isLocked($postActionVars, $entity, 'point');
         }
 
-
-        $actionType = ($this->request->getMethod() == 'POST') ? $this->request->request->get('point[type]', '', true) : '';
+        $actionType = ($this->request->getMethod() == 'POST') ? $this->request->request->get('point[type]', '', true) : $entity->getType();
 
         $action  = $this->generateUrl('mautic_point_action', array('objectAction' => 'edit', 'objectId' => $objectId));
         $actions = $model->getPointActions();
@@ -258,7 +269,6 @@ class PointController extends FormController
             'pointActions' => $actions,
             'actionType'   => $actionType
         ));
-
 
         ///Check for a submitted form and process it
         if (!$ignorePost && $this->request->getMethod() == 'POST') {
@@ -304,11 +314,15 @@ class PointController extends FormController
             $model->lockEntity($entity);
         }
 
+        $themes = array('MauticPointBundle:FormTheme\Action');
+        if (!empty($actions['actions'][$actionType]['formTheme'])) {
+            $themes[] = $actions['actions'][$actionType]['formTheme'];
+        }
         return $this->delegateView(array(
             'viewParameters'  => array(
                 'tmpl'           => $this->request->isXmlHttpRequest() ? $this->request->get('tmpl', 'index') : 'index',
                 'entity'         => $entity,
-                'form'           => $this->setFormTheme($form, 'MauticPointBundle:Point:form.html.php', 'MauticPointBundle:FormTheme\Action'),
+                'form'           => $this->setFormTheme($form, 'MauticPointBundle:Point:form.html.php', $themes),
                 'actions'        => $actions['actions']
             ),
             'contentTemplate' => 'MauticPointBundle:Point:form.html.php',
@@ -341,13 +355,11 @@ class PointController extends FormController
                 return $this->accessDenied();
             }
 
-            $clone = clone $entity;
-            $clone->setIsPublished(false);
-            $model->saveEntity($clone);
-            $objectId = $clone->getId();
+            $entity = clone $entity;
+            $entity->setIsPublished(false);
         }
 
-        return $this->editAction($objectId);
+        return $this->newAction($entity);
     }
 
     /**
@@ -432,7 +444,7 @@ class PointController extends FormController
 
         if ($this->request->getMethod() == 'POST') {
             $model     = $this->factory->getModel('point');
-            $ids       = json_decode($this->request->query->get('ids', array()));
+            $ids       = json_decode($this->request->query->get('ids', '{}'));
             $deleteIds = array();
 
             // Loop over the IDs to perform access checks pre-delete

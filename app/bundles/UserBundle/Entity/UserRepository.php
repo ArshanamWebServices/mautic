@@ -128,10 +128,9 @@ class UserRepository extends CommonRepository
             ->select('u, r')
             ->leftJoin('u.role', 'r');
 
-        $this->buildClauses($q, $args);
+        $args['qb'] = $q;
 
-        $query = $q->getQuery();
-        return new Paginator($query);
+        return parent::getEntities($args);
     }
 
     /**
@@ -184,13 +183,14 @@ class UserRepository extends CommonRepository
                 );
             }
             $expr = $q->expr()->orX(
-                $q->expr()->eq('r.isAdmin', true),
+                $q->expr()->eq('r.isAdmin', ':true'),
                 $expr
             );
             $q->andWhere($expr);
         }
 
-        $q->andWhere('u.isPublished = 1')
+        $q->andWhere('u.isPublished = :true')
+            ->setParameter('true', true, 'boolean')
             ->orderBy('u.firstName, u.lastName');
 
         if (!empty($limit)) {
@@ -263,54 +263,54 @@ class UserRepository extends CommonRepository
     protected function addSearchCommandWhereClause(&$q, $filter)
     {
         $command         = $filter->command;
-        $string          = $filter->string;
         $unique          = $this->generateRandomParameterName();
         $returnParameter = true; //returning a parameter that is not used will lead to a Doctrine error
         $expr            = false;
         switch ($command) {
-            case $this->translator->trans('mautic.core.searchcommand.is'):
-                switch($string) {
-                    case $this->translator->trans('mautic.core.searchcommand.ispublished'):
-                        $expr = $q->expr()->eq("u.isPublished", 1);
-                        break;
-                    case $this->translator->trans('mautic.core.searchcommand.isunpublished'):
-                        $expr = $q->expr()->eq("u.isPublished", 0);
-                        break;
-                    case $this->translator->trans('mautic.user.user.searchcommand.isadmin');
-                        $expr = $q->expr()->eq("r.isAdmin", 1);
-                        break;
-                }
-                $returnParameter = false;
+            case $this->translator->trans('mautic.core.searchcommand.ispublished'):
+                $expr            = $q->expr()->eq("u.isPublished", ":$unique");
+                $forceParameters = array($unique => true);
+
                 break;
-            case $this->translator->trans('mautic.user.user.searchcommand.email'):
-                $expr = $q->expr()->like("u.email", ':'.$unique);
+            case $this->translator->trans('mautic.core.searchcommand.isunpublished'):
+                $expr            = $q->expr()->eq("u.isPublished", ":$unique");
+                $forceParameters = array($unique => false);
+
+                break;
+            case $this->translator->trans('mautic.user.user.searchcommand.isadmin');
+                $expr            = $q->expr()->eq("r.isAdmin", ":$unique");
+                $forceParameters = array($unique => true);
+                break;
+            case $this->translator->trans('mautic.core.searchcommand.email'):
+                $expr = $q->expr()->like("u.email", ':' . $unique);
                 break;
             case $this->translator->trans('mautic.user.user.searchcommand.position'):
-                $expr = $q->expr()->like("u.position", ':'.$unique);
+                $expr = $q->expr()->like("u.position", ':' . $unique);
                 break;
             case $this->translator->trans('mautic.user.user.searchcommand.username'):
-                $expr = $q->expr()->like("u.username", ':'.$unique);
+                $expr = $q->expr()->like("u.username", ':' . $unique);
                 break;
             case $this->translator->trans('mautic.user.user.searchcommand.role'):
-                $expr = $q->expr()->like("r.name", ':'.$unique);
+                $expr = $q->expr()->like("r.name", ':' . $unique);
                 break;
             case $this->translator->trans('mautic.core.searchcommand.name'):
                 $expr = $q->expr()->orX(
-                    $q->expr()->like('u.firstName', ':'.$unique),
-                    $q->expr()->like('u.lastName', ':'.$unique)
+                    $q->expr()->like('u.firstName', ':' . $unique),
+                    $q->expr()->like('u.lastName', ':' . $unique)
                 );
                 break;
         }
 
-        $string  = ($filter->strict) ? $filter->string : "%{$filter->string}%";
-        if ($expr && $filter->not) {
-            $expr = $q->expr()->not($expr);
+        if (!empty($forceParameters)) {
+            $parameters = $forceParameters;
+        } elseif (!$returnParameter) {
+            $parameters = array();
+        } else {
+            $string     = ($filter->strict) ? $filter->string : "%{$filter->string}%";
+            $parameters = array("$unique" => $string);
         }
-        return array(
-            $expr,
-            ($returnParameter) ? array("$unique" => $string) : array()
-        );
 
+        return array($expr, $parameters);
     }
 
     /**
@@ -319,18 +319,15 @@ class UserRepository extends CommonRepository
     public function getSearchCommands()
     {
          return array(
-            'mautic.user.user.searchcommand.email',
-            'mautic.core.searchcommand.is' => array(
-                'mautic.core.searchcommand.ispublished',
-                'mautic.core.searchcommand.isunpublished',
-                'mautic.user.user.searchcommand.isadmin'
-            ),
+            'mautic.core.searchcommand.email',
+            'mautic.core.searchcommand.ispublished',
+            'mautic.core.searchcommand.isunpublished',
+            'mautic.user.user.searchcommand.isadmin',
             'mautic.core.searchcommand.name',
             'mautic.user.user.searchcommand.position',
             'mautic.user.user.searchcommand.role',
             'mautic.user.user.searchcommand.username'
         );
-
     }
 
     /**
@@ -343,5 +340,13 @@ class UserRepository extends CommonRepository
             array('u.firstName', 'ASC'),
             array('u.username', 'ASC')
         );
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getTableAlias()
+    {
+        return 'u';
     }
 }

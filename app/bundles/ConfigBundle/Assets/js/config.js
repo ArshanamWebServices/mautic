@@ -12,40 +12,57 @@ Mautic.hideSpecificConfigFields = function() {
 	var form = mQuery('form[name="config"]');
 
 	var fields = {};
-	// find all fields to hide
-	form.find('[data-hide-on]').each(function(index, el) {
-		var field = mQuery(el);
-		console.log(field.attr('data-hide-on'));
-		var hideOn = jQuery.parseJSON(field.attr('data-hide-on'));
-		console.log(hideOn);
-		mQuery.each(hideOn, function(fieldId, condition) {
-			var sourceFieldVal = mQuery('#' + fieldId).val();
-			if (mQuery.inArray(sourceFieldVal, condition) !== -1 && fields[field.attr('id')] !== true) {
-				fields[field.attr('id')] = false;
-			} else {
-				fields[field.attr('id')] = true;
-			}
-	    });
 
-	});
 	// find all fields to show
 	form.find('[data-show-on]').each(function(index, el) {
 		var field = mQuery(el);
-		console.log(field.attr('data-show-on'));
 		var showOn = jQuery.parseJSON(field.attr('data-show-on'));
 
 	    mQuery.each(showOn, function(fieldId, condition) {
-			var sourceFieldVal = mQuery('#' + fieldId).val();
-			if (mQuery.inArray(sourceFieldVal, condition) === -1 && fields[field.attr('id')] !== true) {
-				fields[field.attr('id')] = false;
-			} else {
-				fields[field.attr('id')] = true;
+			if (typeof fields[field.attr('id')] == 'undefined' || fields[field.attr('id')] !== true) {
+				if (mQuery('#' + fieldId).is(':checkbox') || mQuery('#' + fieldId).is(':radio')) {
+					if ((condition == 'checked' && mQuery('#' + fieldId).is(':checked')) || (condition == '' && !mQuery('#' + fieldId).is(':checked'))) {
+						fields[field.attr('id')] = true;
+					} else {
+						fields[field.attr('id')] = false;
+					}
+				} else {
+					var sourceFieldVal = mQuery('#' + fieldId).val();
+					if (mQuery.inArray(sourceFieldVal, condition) === -1) {
+						fields[field.attr('id')] = false;
+					} else {
+						fields[field.attr('id')] = true;
+					}
+				}
 			}
 	    });
 	});
+
+	// find all fields to hide
+	form.find('[data-hide-on]').each(function(index, el) {
+		var field  = mQuery(el);
+		var hideOn = jQuery.parseJSON(field.attr('data-hide-on'));
+		mQuery.each(hideOn, function(fieldId, condition) {
+			if (mQuery('#' + fieldId).is(':checkbox') || mQuery('#' + fieldId).is(':radio')) {
+				if ((condition == 'checked' && mQuery('#' + fieldId).is(':checked')) || (condition == '' && !mQuery('#' + fieldId).is(':checked'))) {
+					fields[field.attr('id')] = false;
+				} else {
+					fields[field.attr('id')] = true;
+				}
+			} else {
+				var sourceFieldVal = mQuery('#' + fieldId).val();
+				if (mQuery.inArray(sourceFieldVal, condition) !== -1) {
+					fields[field.attr('id')] = false;
+				} else if (typeof fields[field.attr('id')] == 'undefined') {
+					fields[field.attr('id')] = true;
+				}
+			}
+		});
+	});
+
 	// show/hide according to conditions
 	mQuery.each(fields, function(fieldId, show) {
-		var fieldContainer = mQuery('#' + fieldId).closest('.col-md-6');;
+		var fieldContainer = mQuery('#' + fieldId).closest('[class*="col-"]');;
 		if (show) {
 			fieldContainer.fadeIn();
 		} else {

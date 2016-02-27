@@ -15,19 +15,16 @@ $view->extend('MauticPointBundle:Point:index.html.php');
     <table class="table table-hover table-striped table-bordered point-list" id="pointTable">
         <thead>
         <tr>
-            <th class="visible-md visible-lg col-point-actions pl-20">
-                <div class="checkbox-inline custom-primary">
-                    <label class="mb-0 pl-10">
-                        <input type="checkbox" id="customcheckbox-one0" value="1" data-toggle="checkall" data-target="#pointTable">
-                        <span></span>
-                    </label>
-                </div>
-            </th>
             <?php
+            echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
+                'checkall' => 'true',
+                'target'   => '#pointTable'
+            ));
+
             echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                 'sessionVar' => 'point',
                 'orderBy'    => 'p.name',
-                'text'       => 'mautic.point.thead.name',
+                'text'       => 'mautic.core.name',
                 'class'      => 'col-point-name',
                 'default'    => true
             ));
@@ -35,7 +32,7 @@ $view->extend('MauticPointBundle:Point:index.html.php');
             echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                 'sessionVar' => 'point',
                 'orderBy'    => 'c.title',
-                'text'       => 'mautic.point.thead.category',
+                'text'       => 'mautic.core.category',
                 'class'      => 'visible-md visible-lg col-point-category'
             ));
 
@@ -51,7 +48,7 @@ $view->extend('MauticPointBundle:Point:index.html.php');
             echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                 'sessionVar' => 'point',
                 'orderBy'    => 'p.id',
-                'text'       => 'mautic.point.thead.id',
+                'text'       => 'mautic.core.id',
                 'class'      => 'visible-md visible-lg col-point-id'
             ));
             ?>
@@ -60,7 +57,7 @@ $view->extend('MauticPointBundle:Point:index.html.php');
         <tbody>
         <?php foreach ($items as $item): ?>
             <tr>
-                <td class="visible-md visible-lg">
+                <td>
                     <?php
                     echo $view->render('MauticCoreBundle:Helper:list_actions.html.php', array(
                         'item'      => $item,
@@ -75,10 +72,7 @@ $view->extend('MauticPointBundle:Point:index.html.php');
                 </td>
                 <td>
                     <div>
-                        <?php echo $view->render('MauticCoreBundle:Helper:publishstatus_icon.html.php',array(
-                            'item'       => $item,
-                            'model'      => 'point'
-                        )); ?>
+                        <?php echo $view->render('MauticCoreBundle:Helper:publishstatus_icon.html.php',array('item' => $item, 'model' => 'point')); ?>
                         <?php echo $item->getName(); ?>
                     </div>
                     <?php if ($description = $item->getDescription()): ?>
@@ -89,8 +83,7 @@ $view->extend('MauticPointBundle:Point:index.html.php');
                     <?php $category = $item->getCategory(); ?>
                     <?php $catName  = ($category) ? $category->getTitle() : $view['translator']->trans('mautic.core.form.uncategorized'); ?>
                     <?php $color    = ($category) ? '#' . $category->getColor() : 'inherit'; ?>
-                    <span class="label label-default pa-5" style="background: <?php echo $color; ?>;"> </span>
-                    <span><?php echo $catName; ?></span>
+                    <span style="white-space: nowrap;"><span class="label label-default pa-4" style="border: 1px solid #d5d5d5; background: <?php echo $color; ?>;"> </span> <span><?php echo $catName; ?></span></span>
                 </td>
                 <td class="visible-md visible-lg"><?php echo $item->getDelta(); ?></td>
                 <?php

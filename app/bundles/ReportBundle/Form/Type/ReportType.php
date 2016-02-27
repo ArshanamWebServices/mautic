@@ -55,20 +55,20 @@ class ReportType extends AbstractType
     public function buildForm (FormBuilderInterface $builder, array $options)
     {
         $builder->addEventSubscriber(new CleanFormSubscriber(array('description' => 'html')));
-        $builder->addEventSubscriber(new FormExitSubscriber('report.report', $options));
+        $builder->addEventSubscriber(new FormExitSubscriber('report', $options));
 
         // Only add these fields if we're in edit mode
         if (!$options['read_only']) {
 
-            $builder->add('title', 'text', array(
-                'label'      => 'mautic.report.report.form.title',
+            $builder->add('name', 'text', array(
+                'label'      => 'mautic.core.name',
                 'label_attr' => array('class' => 'control-label'),
                 'attr'       => array('class' => 'form-control'),
                 'required'   => true
             ));
 
             $builder->add('description', 'textarea', array(
-                'label'      => 'mautic.report.report.form.description',
+                'label'      => 'mautic.core.description',
                 'label_attr' => array('class' => 'control-label'),
                 'attr'       => array('class' => 'form-control editor'),
                 'required'   => false
@@ -76,8 +76,13 @@ class ReportType extends AbstractType
 
             $builder->add('isPublished', 'yesno_button_group');
 
+            $data = $options['data']->getSystem();
             $builder->add('system', 'yesno_button_group', array(
-                'label' => 'mautic.report.report.form.issystem'
+                'label' => 'mautic.report.report.form.issystem',
+                'data'  => $data,
+                'attr'  => array(
+                    'tooltip' => 'mautic.report.report.form.issystem.tooltip'
+                )
             ));
 
             // Quickly build the table source list for use in the selector
@@ -95,44 +100,65 @@ class ReportType extends AbstractType
                 'attr'        => array(
                     'class'    => 'form-control',
                     'tooltip'  => 'mautic.report.report.form.source.help',
-                    'onchange' => 'Mautic.updateColumnList(this)'
+                    'onchange' => 'Mautic.updateReportSourceData(this.value)'
                 )
             ));
 
-            $model        = $this->factory->getModel('report');
-            $formModifier = function (FormInterface $form, $source = '') use ($model) {
-                $tableData = $model->getTableData();
-                if (!$source) {
-                    $source = key($tableData);
+            /** @var \Mautic\ReportBundle\Model\ReportModel $model */
+            $model     = $this->factory->getModel('report');
+            $tableList = $options['table_list'];
+            $formModifier = function (FormInterface $form, $source, $currentColumns, $currentGraphs, $formData) use ($model, $tables, $tableList) {
+                if(empty($source)) {
+                    reset($tables);
+                    $first_key = key($tables);
+                    $source    = $first_key;
                 }
-                $columns = $tableData[$source]['columns'];
 
-                // Create an array of columns, the key is the column value stored in the database and the value is what the user sees
-                $columnList = array();
-                foreach ($columns as $column => $data) {
-                    if (isset($data['label'])) {
-                        $columnList[$column] = $data['label'];
-                    }
+                list($columnList, $types) = $model->getColumnList($source);
+                if (is_array($currentColumns)) {
+                    $orderColumns = array_values($currentColumns);
+                    $order        = htmlspecialchars(json_encode($orderColumns), ENT_QUOTES, 'UTF-8');
+                } else {
+                    $order = '[]';
                 }
 
                 // Build the columns selector
                 $form->add('columns', 'choice', array(
                     'choices'    => $columnList,
-                    'label'      => 'mautic.report.report.form.columnselector',
+                    'label'      => false,
                     'label_attr' => array('class' => 'control-label'),
                     'required'   => false,
                     'multiple'   => true,
                     'expanded'   => false,
                     'attr'       => array(
-                        'class' => 'form-control'
+                        'class'         => 'form-control multiselect',
+                        'data-order'    => $order,
+                        'data-sortable' => 'true'
                     )
                 ));
 
                 // Build the filter selector
-                $form->add('filters', 'collection', array(
+                $form->add('filters', 'report_filters', array(
                     'type'         => 'filter_selector',
-                    'label'        => 'mautic.report.report.form.filterselector',
-                    'label_attr'   => array('class' => 'control-label'),
+                    'label'        => false,
+                    'options'      => array(
+                        'columnList' => $columnList,
+                        'required'   => false
+                    ),
+                    'allow_add'    => true,
+                    'allow_delete' => true,
+                    'prototype'    => true,
+                    'required'     => false,
+                    'attr'         => array(
+                        'data-column-types' => $types
+                    ),
+                    'columns'      => $tableList[$source]['columns'],
+                    'report'       => $formData
+                ));
+
+                $form->add('tableOrder', 'collection', array(
+                    'type'         => 'table_order',
+                    'label'        => false,
                     'options'      => array(
                         'columnList' => $columnList,
                         'required'   => false
@@ -142,21 +168,58 @@ class ReportType extends AbstractType
                     'prototype'    => true,
                     'required'     => false
                 ));
+
+                // Templates for values
+                $form->add('value_template_yesno', 'yesno_button_group', array(
+                    'label'  => false,
+                    'mapped' => false,
+                    'attr'   => array(
+                        'class' => 'filter-value'
+                    ),
+                    'data'   => 1,
+                    'choice_list' => new ChoiceList(
+                        array(0, 1),
+                        array('mautic.core.form.no', 'mautic.core.form.yes')
+                    ),
+                ));
+
+
+                $graphList = $model->getGraphList($source);
+                if (is_array($currentGraphs)) {
+                    $orderColumns = array_values($currentGraphs);
+                    $order        = htmlspecialchars(json_encode($orderColumns), ENT_QUOTES, 'UTF-8');
+                } else {
+                    $order = '[]';
+                }
+
+                $form->add('graphs', 'choice', array(
+                    'choices'    => $graphList,
+                    'label'      => 'mautic.report.report.form.graphs',
+                    'label_attr' => array('class' => 'control-label'),
+                    'required'   => false,
+                    'multiple'   => true,
+                    'expanded'   => false,
+                    'attr'       => array(
+                        'class'         => 'form-control multiselect',
+                        'data-order'    => $order,
+                        'data-sortable' => 'true'
+                    )
+                ));
             };
 
-            $builder->addEventListener(
-                FormEvents::PRE_SET_DATA,
+            $builder->addEventListener(FormEvents::PRE_SET_DATA,
                 function (FormEvent $event) use ($formModifier) {
-                    $formModifier($event->getForm(), $event->getData()->getSource());
+                    $data = $event->getData();
+                    $formModifier($event->getForm(), $data->getSource(), $data->getColumns(), $data->getGraphs(), $data);
                 }
             );
 
-            $builder->get('source')->addEventListener(
-                FormEvents::POST_SUBMIT,
+            $builder->addEventListener(FormEvents::PRE_SUBMIT,
                 function (FormEvent $event) use ($formModifier) {
-                    // since we've added the listener to the child, we'll have to pass on
-                    // the parent to the callback functions!
-                    $formModifier($event->getForm()->getParent(), $event->getForm()->getData());
+                    $data    = $event->getData();
+                    $graphs  = (isset($data['graphs'])) ? $data['graphs'] : array();
+                    $columns = (isset($data['columns'])) ? $data['columns'] : array();
+                    $formModifier($event->getForm(), $data['source'], $columns, $graphs, $data);
                 }
             );
 

@@ -19,7 +19,9 @@ class FieldController extends FormController
     /**
      * Generate's default list view
      *
-     * @return \Symfony\Component\HttpFoundation\JsonResponse|\Symfony\Component\HttpFoundation\Response
+     * @param int $page
+     *
+     * @return array|\Symfony\Component\HttpFoundation\JsonResponse|\Symfony\Component\HttpFoundation\RedirectResponse|\Symfony\Component\HttpFoundation\Response
      */
     public function indexAction($page = 1)
     {
@@ -30,6 +32,10 @@ class FieldController extends FormController
 
         if (!$permissions['lead:fields:full']) {
             return $this->accessDenied();
+        }
+
+        if ($this->request->getMethod() == 'POST') {
+            $this->setListFilters();
         }
 
         $limit = $session->get('mautic.leadfield.limit', $this->factory->getParameter('default_pagelimit'));
@@ -64,7 +70,7 @@ class FieldController extends FormController
             if ($count === 1) {
                 $lastPage = 1;
             } else {
-                $lastPage = (floor($limit / $count)) ?: 1;
+                $lastPage = (ceil($count / $limit)) ?: 1;
             }
             $session->set('mautic.leadfield.page', $lastPage);
             $returnUrl = $this->generateUrl('mautic_leadfield_index', array('page' => $lastPage));
@@ -142,17 +148,22 @@ class FieldController extends FormController
                     }
 
                     if ($valid) {
-                        //form is valid so process the data
-                        $model->saveEntity($field);
+                        try {
+                            //form is valid so process the data
+                            $model->saveEntity($field);
 
-                        $this->addFlash('mautic.core.notice.created',  array(
-                            '%name%'      => $field->getLabel(),
-                            '%menu_link%' => 'mautic_leadfield_index',
-                            '%url%'       => $this->generateUrl('mautic_leadfield_action', array(
-                                'objectAction' => 'edit',
-                                'objectId'     => $field->getId()
-                            ))
-                        ));
+                            $this->addFlash('mautic.core.notice.created', array(
+                                '%name%'      => $field->getLabel(),
+                                '%menu_link%' => 'mautic_leadfield_index',
+                                '%url%'       => $this->generateUrl('mautic_leadfield_action', array(
+                                    'objectAction' => 'edit',
+                                    'objectId'     => $field->getId()
+                                ))
+                            ));
+                        } catch (\Exception $e) {
+                            $form['alias']->addError(new FormError($this->get('translator')->trans('mautic.lead.field.failed', array('%error%' => $e->getMessage()), 'validators')));
+                            $valid = false;
+                        }
                     }
                 }
             }
@@ -187,7 +198,10 @@ class FieldController extends FormController
     /**
      * Generate's edit form and processes post data
      *
-     * @return \Symfony\Component\HttpFoundation\RedirectResponse|\Symfony\Component\HttpFoundation\Response
+     * @param            $objectId
+     * @param bool|false $ignorePost
+     *
+     * @return array|\Symfony\Component\HttpFoundation\JsonResponse|\Symfony\Component\HttpFoundation\RedirectResponse|\Symfony\Component\HttpFoundation\Response
      */
     public function editAction ($objectId, $ignorePost = false)
     {
@@ -403,7 +417,7 @@ class FieldController extends FormController
 
         if ($this->request->getMethod() == 'POST') {
             $model     = $this->factory->getModel('lead.field');
-            $ids       = json_decode($this->request->query->get('ids', array()));
+            $ids       = json_decode($this->request->query->get('ids', '{}'));
             $deleteIds = array();
 
             // Loop over the IDs to perform access checks pre-delete
@@ -416,7 +430,7 @@ class FieldController extends FormController
                         'msg'     => 'mautic.lead.field.error.notfound',
                         'msgVars' => array('%id%' => $objectId)
                     );
-                } elseif ($field->isFixed()) {
+                } elseif ($entity->isFixed()) {
                     $flashes[] = $this->accessDenied(true);
                 } elseif ($model->isLocked($entity)) {
                     $flashes[] = $this->isLocked($postActionVars, $entity, 'lead.field', true);

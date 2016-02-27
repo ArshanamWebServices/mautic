@@ -18,54 +18,44 @@ use Doctrine\ORM\Query;
  */
 class LeadFieldRepository extends CommonRepository
 {
-
-    /**
-     * Get a list of entities
-     *
-     * @param array      $args
-     * @return Paginator
-     */
-    public function getEntities($args = array())
-    {
-        $q = $this->createQueryBuilder($this->getTableAlias());
-
-        $this->buildClauses($q, $args);
-
-        $query = $q->getQuery();
-
-        if (isset($args['hydration_mode'])) {
-            $mode = strtoupper($args['hydration_mode']);
-            $query->setHydrationMode(constant("\\Doctrine\\ORM\\Query::$mode"));
-        }
-
-        $results = new Paginator($query);
-        return $results;
-    }
-
     /**
      * Retrieves array of aliases used to ensure unique alias for new fields
      *
      * @param $exludingId
+     * @param $publishedOnly
+     * @param $includeEntityFields
+     *
      * @return array
      */
-    public function getAliases($exludingId)
+    public function getAliases($exludingId, $publishedOnly = false, $includeEntityFields = true)
     {
-        $q = $this->createQueryBuilder('l')
-            ->select('l.alias');
+        $q = $this->_em->getConnection()->createQueryBuilder()
+            ->select('l.alias')
+            ->from(MAUTIC_TABLE_PREFIX . 'lead_fields', 'l');
+
         if (!empty($exludingId)) {
-        $q->where('l.id != :id')
-            ->setParameter('id', $exludingId);
+            $q->where('l.id != :id')
+                ->setParameter('id', $exludingId);
         }
 
-        $results = $q->getQuery()->getArrayResult();
+        if ($publishedOnly) {
+            $q->andWhere(
+                $q->expr()->eq('is_published', ':true')
+            )
+                ->setParameter(':true', true, 'boolean');
+        }
+
+        $results = $q->execute()->fetchAll();
         $aliases = array();
         foreach($results as $item) {
             $aliases[] = $item['alias'];
         }
 
-        //add lead main column names to prevent attempt to create a field with the same name
-        $leadRepo = $this->_em->getRepository('MauticLeadBundle:Lead')->getBaseColumns('Mautic\\LeadBundle\\Entity\\Lead', true);
-        $aliases = array_merge($aliases, $leadRepo);
+        if ($includeEntityFields) {
+            //add lead main column names to prevent attempt to create a field with the same name
+            $leadRepo = $this->_em->getRepository('MauticLeadBundle:Lead')->getBaseColumns('Mautic\\LeadBundle\\Entity\\Lead', true);
+            $aliases  = array_merge($aliases, $leadRepo);
+        }
 
         return $aliases;
     }
@@ -110,4 +100,47 @@ class LeadFieldRepository extends CommonRepository
             array('f.order', 'ASC')
         );
     }
+
+    /**
+     * Get field aliases for lead table columns
+     */
+    public function getFieldAliases()
+    {
+        $qb = $this->_em->getConnection()->createQueryBuilder();
+
+        return $qb->select('f.alias, f.is_unique_identifer as is_unique')
+                ->from(MAUTIC_TABLE_PREFIX.'lead_fields', 'f')
+                ->orderBy('f.field_order', 'ASC')
+                ->execute()->fetchAll();
+    }
+
+    /**
+     * Compare a form result value with defined value for defined lead.
+     *
+     * @param  integer $lead ID
+     * @param  integer $field alias
+     * @param  string  $value to compare with
+     * @param  string  $operatorExpr for WHERE clause
+     *
+     * @return boolean
+     */
+    public function compareValue($lead, $field, $value, $operatorExpr)
+    {
+        $q = $this->_em->getConnection()->createQueryBuilder();
+        $q->select('l.id')
+            ->from(MAUTIC_TABLE_PREFIX . 'leads', 'l')
+            ->where(
+                $q->expr()->andX(
+                    $q->expr()->eq('l.id', ':lead'),
+                    $q->expr()->$operatorExpr('l.' . $field, ':value')
+                )
+            )
+            ->setParameter('lead', (int) $lead)
+            ->setParameter('value', $value);
+
+        $result = $q->execute()->fetch();
+
+        return !empty($result['id']);
+    }
+
 }

@@ -10,9 +10,9 @@
 namespace Mautic\CoreBundle\EventListener;
 
 use Mautic\CoreBundle\Factory\MauticFactory;
-use Mautic\CoreBundle\Menu\MenuHelper;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use Mautic\CoreBundle\Event as MauticEvents;
+use Symfony\Component\Routing\Route;
 
 /**
  * Class CoreSubscriber
@@ -61,30 +61,34 @@ class CommonSubscriber implements EventSubscriberInterface
     protected $translator;
 
     /**
-     * @var \Mautic\AddonBundle\Helper\AddonHelper
-     */
-    protected $addonHelper;
-
-    /**
      * @param MauticFactory $factory
      */
     public function __construct (MauticFactory $factory)
     {
-        $this->factory         = $factory;
-        $this->templating      = $factory->getTemplating();
-        $this->request         = $factory->getRequest();
-        $this->security        = $factory->getSecurity();
-        $this->serializer      = $factory->getSerializer();
-        $this->params          = $factory->getSystemParameters();
-        $this->dispatcher      = $factory->getDispatcher();
-        $this->translator      = $factory->getTranslator();
-        $this->addonHelper     = $factory->getHelper('addon');
+        $this->factory     = $factory;
+        $this->templating  = $factory->getTemplating();
+        $this->request     = $factory->getRequest();
+        $this->security    = $factory->getSecurity();
+        $this->serializer  = $factory->getSerializer();
+        $this->params      = $factory->getSystemParameters();
+        $this->dispatcher  = $factory->getDispatcher();
+        $this->translator  = $factory->getTranslator();
+
+        $this->init();
+    }
+
+    /**
+     * Post __construct setup so that inheriting classes don't have to pass all the arguments
+     */
+    protected function init()
+    {
+
     }
 
     /**
      * {@inheritdoc}
      */
-    public static function getSubscribedEvents()
+    public static function getSubscribedEvents ()
     {
         return array();
     }
@@ -93,64 +97,46 @@ class CommonSubscriber implements EventSubscriberInterface
      * Find and add menu items
      *
      * @param MauticEvents\MenuEvent $event
-     * @param string                 $name
-     *
-     * @return void
      */
-    protected function buildMenu(MauticEvents\MenuEvent $event, $name)
+    protected function buildMenu (MauticEvents\MenuEvent $event)
     {
-        //for easy access in menu files
-        $security = $event->getSecurity();
-        $request  = $event->getRequest();
-        $user     = $event->getUser();
+        $name      = $event->getType();
+        $session   = $this->factory->getSession();
+        $allItems  = $session->get('mautic.menu.items', array());
 
-        $bundles   = $this->factory->getParameter('bundles');
-        $menuItems = array();
-        foreach ($bundles as $bundle) {
-            //check common place
-            $path = $bundle['directory'] . "/Config/menu/$name.php";
+        if (empty($allItems[$name])) {
+            $bundles = $this->factory->getMauticBundles(true);
 
-            if (file_exists($path)) {
-                $config      = include $path;
-                $menuItems[] = array(
-                    'priority' => !isset($config['priority']) ? 9999 : $config['priority'],
-                    'items'    => !isset($config['items']) ? $config : $config['items']
-                );
-            }
-        }
-
-        // Cannot use the list from kernel here as enabled addons may have changed since
-        $addons = $this->factory->getParameter('addon.bundles');
-        foreach ($addons as $bundle) {
-            if (!$this->addonHelper->isEnabled($bundle['bundle'])) {
-                continue;
+            foreach ($bundles as $bundle) {
+                if (!empty($bundle['config']['menu'][$name])) {
+                    $menu        = $bundle['config']['menu'][$name];
+                    $menuItems[] = array(
+                        'priority' => !isset($menu['priority']) ? 9999 : $menu['priority'],
+                        'items'    => !isset($menu['items']) ? $menu : $menu['items']
+                    );
+                }
             }
 
-            //check common place
-            $path = $bundle['directory'] . "/Config/menu/$name.php";
+            usort($menuItems, function ($a, $b) {
+                $ap = $a['priority'];
+                $bp = $b['priority'];
 
-            if (file_exists($path)) {
-                $config      = include $path;
-                $menuItems[] = array(
-                    'priority' => !isset($config['priority']) ? 9999 : $config['priority'],
-                    'items'    => !isset($config['items']) ? $config : $config['items']
-                );
-            }
-        }
+                if ($ap == $bp) {
+                    return 0;
+                }
 
-        usort($menuItems, function($a, $b) {
-            $ap = $a['priority'];
-            $bp = $b['priority'];
+                return ($ap < $bp) ? -1 : 1;
+            });
 
-            if ($ap == $bp) {
-                return 0;
+            foreach ($menuItems as $items) {
+                $event->addMenuItems($items['items']);
             }
 
-            return ($ap < $bp) ? -1 : 1;
-        });
+            $allItems[$name] = $event->getMenuItems();
 
-        foreach ($menuItems as $items) {
-            $event->addMenuItems($items['items']);
+            unset($bundles, $menuItems);
+        } else {
+            $event->setMenuItems($allItems[$name]);
         }
     }
 
@@ -161,20 +147,21 @@ class CommonSubscriber implements EventSubscriberInterface
      *
      * @return void
      */
-    protected function buildIcons(MauticEvents\IconEvent $event)
+    protected function buildIcons (MauticEvents\IconEvent $event)
     {
-        $security = $event->getSecurity();
-        $request  = $this->factory->getRequest();
-        $bundles  = $this->factory->getParameter('bundles');
+        $session = $this->factory->getSession();
+        $icons   = $session->get('mautic.menu.icons', array());
 
-        $fetchIcons = function($bundle) use (&$event, $security, $request) {
-            //check common place
-            $path = $bundle['directory'] . "/Config/menu/main.php";
+        if (empty($icons)) {
+            $bundles    = $this->factory->getMauticBundles(true);
+            $menuHelper = $this->factory->getHelper('menu');
+            foreach ($bundles as $bundle) {
+                if (!empty($bundle['config']['menu']['main'])) {
+                    $items = (!isset($bundle['config']['menu']['main']['items']) ? $bundle['config']['menu']['main'] : $bundle['config']['menu']['main']['items']);
+                }
 
-            if (file_exists($path)) {
-                $config = include $path;
-                $items  = (!isset($config['items']) ? $config : $config['items']);
-                    MenuHelper::createMenuStructure($items);
+                if (!empty($items)) {
+                    $menuHelper->createMenuStructure($items);
                     foreach ($items as $item) {
                         if (isset($item['iconClass']) && isset($item['id'])) {
                             $id = explode('_', $item['id']);
@@ -188,19 +175,13 @@ class CommonSubscriber implements EventSubscriberInterface
                         }
                     }
                 }
-        };
-
-        foreach ($bundles as $bundle) {
-            $fetchIcons($bundle);
-        }
-
-        // Cannot use the list from kernel here as enabled addons may have changed since
-        $addons = $this->factory->getParameter('addon.bundles');
-        foreach ($addons as $bundle) {
-            if (!$this->addonHelper->isEnabled($bundle['bundle'])) {
-                continue;
             }
-            $fetchIcons($bundle);
+            unset($bundles, $menuHelper);
+
+            $icons = $event->getIcons();
+            $session->set('mautic.menu.icons', $icons);
+        } else {
+            $event->setIcons($icons);
         }
     }
 
@@ -209,27 +190,66 @@ class CommonSubscriber implements EventSubscriberInterface
      * Get routing from bundles and add to Routing event
      *
      * @param MauticEvents\RouteEvent $event
-     * @param string                  $name
      *
      * @return void
      */
-    protected function buildRoute(MauticEvents\RouteEvent $event, $name)
+    protected function buildRoute (MauticEvents\RouteEvent $event)
     {
-        $bundles = $this->factory->getParameter('bundles');
-        foreach ($bundles as $bundle) {
-            $routing = $bundle['directory'] . "/Config/routing/$name.php";
-            if (file_exists($routing)) {
-                $event->addRoutes($routing);
-            }
-        }
+        $type       = $event->getType();
+        $bundles    = $this->factory->getMauticBundles(true);
+        $collection = $event->getCollection();
 
-        // Cannot use the list from kernel here as enabled addons may have changed since
-        $addons = $this->factory->getParameter('addon.bundles');
-        foreach ($addons as $bundle) {
-            if ($this->addonHelper->isEnabled($bundle['bundle'])) {
-                $routing = $bundle['directory'] . "/Config/routing/$name.php";
-                if (file_exists($routing)) {
-                    $event->addRoutes($routing);
+        foreach ($bundles as $bundle) {
+            if (!empty($bundle['config']['routes'][$type])) {
+                foreach ($bundle['config']['routes'][$type] as $name => $details) {
+                    // Set defaults and controller
+                    $defaults = (!empty($details['defaults'])) ? $details['defaults'] : array();
+                    if (isset($details['controller'])) {
+                        $defaults['_controller'] = $details['controller'];
+                    }
+
+                    if (isset($details['format'])) {
+                        $defaults['_format'] = $details['format'];
+                    } elseif ($type == 'api') {
+                        $defaults['_format'] = 'json';
+                    }
+
+                    // Set requirements
+                    $requirements = (!empty($details['requirements'])) ? $details['requirements'] : array();
+
+                    if (isset($details['method'])) {
+                        $requirements['_method'] = $details['method'];
+                    } elseif ($type == 'api') {
+                        $requirements['_method'] = 'GET';
+                    }
+
+                    // Set some very commonly used defaults and requirements
+                    if (strpos($details['path'], '{page}') !== false) {
+                        if (!isset($defaults['page'])) {
+                            $defaults['page'] = 1;
+                        }
+                        if (!isset($requirements['page'])) {
+                            $requirements['page'] = '\d+';
+                        }
+                    }
+                    if (strpos($details['path'], '{objectId}') !== false) {
+                        if (!isset($defaults['objectId'])) {
+                            // Set default to 0 for the "new" actions
+                            $defaults['objectId'] = 0;
+                        }
+                        if (!isset($requirements['objectId'])) {
+                            // Only allow alphanumeric for objectId
+                            $requirements['objectId'] = "[a-zA-Z0-9_]+";
+                        }
+                    }
+                    if ($type == 'api' && strpos($details['path'], '{id}') !== false) {
+                        if (!isset($requirements['page'])) {
+                            $requirements['id'] = '\d+';
+                        }
+                    }
+
+                    // Add the route
+                    $collection->add($name, new Route($details['path'], $defaults, $requirements));
                 }
             }
         }

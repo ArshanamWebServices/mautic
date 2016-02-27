@@ -14,28 +14,25 @@ if ($tmpl == 'index')
         <table class="table table-hover table-striped table-bordered report-list" id="reportTable">
             <thead>
                 <tr>
-                    <th class="col-report-actions pl-20">
-                        <div class="checkbox-inline custom-primary">
-                            <label class="mb-0 pl-10">
-                                <input type="checkbox" id="customcheckbox-one0" value="1" data-toggle="checkall" data-target="#reportTable">
-                                <span></span>
-                            </label>
-                        </div>
-                    </th>
                     <?php
                     echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
+                        'checkall' => 'true',
+                        'target'   => '#reportTable'
+                    ));
+
+                    echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                         'sessionVar' => 'report',
-                        'orderBy'    => 'p.title',
-                        'text'       => 'mautic.report.report.thead.title',
-                        'class'      => 'col-report-title',
+                        'orderBy'    => 'r.name',
+                        'text'       => 'mautic.core.name',
+                        'class'      => 'col-report-name',
                         'default'    => true
                     ));
 
                     echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                         'sessionVar' => 'report',
-                        'orderBy'    => 'p.id',
-                        'text'       => 'mautic.report.report.thead.id',
-                        'class'      => 'col-report-id'
+                        'orderBy'    => 'r.id',
+                        'text'       => 'mautic.core.id',
+                        'class'      => 'col-report-id visible-md visible-lg'
                     ));
                     ?>
                 </tr>
@@ -53,21 +50,15 @@ if ($tmpl == 'index')
                                 'delete'    => $security->hasEntityAccess($permissions['report:reports:deleteown'], $permissions['report:reports:deleteother'], $item->getCreatedBy()),
                             ),
                             'routeBase'  => 'report',
-                            'langVar'    => 'report.report',
-                            'nameGetter' => 'getTitle'
+                            'langVar'    => 'report.report'
                         ));
                         ?>
                     </td>
                     <td>
                         <div>
-                            <?php echo $view->render('MauticCoreBundle:Helper:publishstatus_icon.html.php',array(
-                                'item'       => $item,
-                                'model'      => 'report.report'
-                            )); ?>
-                            <a href="<?php echo $view['router']->generate('mautic_report_action',
-                                array("objectAction" => "view", "objectId" => $item->getId())); ?>"
-                               data-toggle="ajax">
-                                <?php echo $item->getTitle(); ?>
+                            <?php echo $view->render('MauticCoreBundle:Helper:publishstatus_icon.html.php',array('item'=> $item, 'model' => 'report.report')); ?>
+                            <a href="<?php echo $view['router']->generate('mautic_report_view', array("objectId" => $item->getId())); ?>" data-toggle="ajax">
+                                <?php echo $item->getName(); ?>
                             </a>
                         </div>
                         <?php if ($description = $item->getDescription()): ?>
@@ -81,12 +72,12 @@ if ($tmpl == 'index')
         </table>
         <div class="panel-footer">
         <?php echo $view->render('MauticCoreBundle:Helper:pagination.html.php', array(
-            "totalItems"      => count($items),
+            "totalItems"      => $totalItems,
             "page"            => $page,
             "limit"           => $limit,
             "menuLinkId"      => 'mautic_report_index',
             "baseUrl"         => $view['router']->generate('mautic_report_index'),
-            'sessionVar'      => 'page'
+            'sessionVar'      => 'report'
         )); ?>
         </div>
     </div>

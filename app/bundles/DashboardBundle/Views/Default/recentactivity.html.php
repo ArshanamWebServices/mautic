@@ -17,7 +17,7 @@
         <ul class="media-list media-list-feed">
             <?php foreach ($logs as $log) : ?>
             <li class="media">
-                <div class="media-object pull-left mt-xs">
+                <div class="media-object pull-left">
                     <span class="figure featured <?php echo ($log['action'] == 'create') ? 'bg-success' : ''; ?>">
                         <span class="fa <?php echo isset($icons[$log['bundle']]) ? $icons[$log['bundle']] : '' ?>"></span>
                     </span>
@@ -27,13 +27,20 @@
                         <a href="<?php echo $view['router']->generate('mautic_user_action', array('objectAction' => 'edit', 'objectId' => $log['userId'])); ?>" data-toggle="ajax">
                             <?php echo $log['userName']; ?>
                         </a>
-                    <?php else : ?>
+                    <?php elseif ($log['userName']) : ?>
                         <?php echo $log['userName']; ?>
+                    <?php else: ?>
+                        <?php echo $view['translator']->trans('mautic.core.system'); ?>
                     <?php endif; ?>
                     <?php echo $view['translator']->trans('mautic.dashboard.' . $log['action'] . '.past.tense'); ?>
-                    <a href="<?php echo $view['router']->generate('mautic_' . $log['bundle'] . '_action', array('objectAction' => 'view', 'objectId' => $log['objectId'])); ?>" data-toggle="ajax">
+
+                    <?php if (!empty($log['route'])): ?>
+                    <a href="<?php echo $log['route']; ?>" data-toggle="ajax">
                         <?php echo $log['objectName']; ?>
                     </a>
+                    <?php else: ?>
+                    <?php echo $log['objectName']; ?>
+                    <?php endif; ?>
                     <?php echo $log['object']; ?>
                     <p class="fs-12 dark-sm"><small> <?php echo $view['date']->toFull($log['dateAdded']); ?></small></p>
                 </div>

@@ -16,9 +16,30 @@
  *	@copyright	Authors
  */
 
+use Symfony\Component\HttpKernel\HttpKernelInterface;
+use Symfony\Component\HttpKernel\Event\GetResponseEvent;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpKernel\KernelEvents;
+use Symfony\Component\Security\Core\Authentication\Token\TokenInterface;
 
+// Boot Symfony
+require_once __DIR__ . '/../../../../../../../../../bootstrap.php.cache';
+require_once __DIR__ . '/../../../../../../../../../AppKernel.php';
+$kernel = new AppKernel('prod', false);
+$kernel->boot();
+$container  = $kernel->getContainer();
 
-session_start();
+// Dispatch REQUEST event to setup authentication
+$request    = Request::createFromGlobals();
+$httpKernel = $container->get('http_kernel');
+$event      = new GetResponseEvent($httpKernel, $request, HttpKernelInterface::MASTER_REQUEST);
+$container->get('event_dispatcher')->dispatch(KernelEvents::REQUEST, $event);
+
+$session       = $container->get('session');
+$securityToken = $container->get('security.token_storage');
+$token         = $securityToken->getToken();
+$authenticated = ($token instanceof TokenInterface) ? count($token->getRoles()) : false;
+
 /**
  *	Check if user is authorized
  *
@@ -26,12 +47,12 @@ session_start();
  *	@return boolean true if access granted, false if no access
  */
 function auth() {
+    global $authenticated;
     // You can insert your own code over here to check if the user is authorized.
     // If you use a session variable, you've got to start the session first (session_start())
 
-    return (!empty($_SESSION['_sf2_attributes']['mautic.user'])) ? true : false;
+    return $authenticated;
 }
-
 
 // @todo Work on plugins registration
 // if (isset($config['plugin']) && !empty($config['plugin'])) {
@@ -44,21 +65,34 @@ function auth() {
 // 	$fm = new Filemanager($config);
 // }
 
-$userDir = $_SESSION['_sf2_attributes']['mautic.imagepath'];
-$baseDir = $_SESSION['_sf2_attributes']['mautic.basepath'];
-
-if (substr($userDir, -1) !== '/') {
-    $userDir .= '/';
-}
-
-if (substr($userDir, 0, 1) !== '/') {
-    $userDir = '/' . $userDir;
-}
-
-if ($baseDir) {
-    $userDir = $baseDir . $userDir;
-}
-
 $fm = new Filemanager();
-$fm->setFileRoot($userDir);
-?>
+
+if ($authenticated) {
+    $userDir = $session->get('mautic.imagepath', false);
+    $baseDir = $session->get('mautic.basepath', false);
+    $docRoot = $session->get('mautic.docroot', false);
+
+    if (substr($userDir, -1) !== '/') {
+        $userDir .= '/';
+    }
+
+    if ($baseDir && $baseDir != '/') {
+        if (substr($baseDir, 0, 1) == '/') {
+            $baseDir = substr($baseDir, 1);
+        }
+
+        if (substr($baseDir, -1) == '/') {
+            $baseDir = substr($baseDir, 0, -1);
+        }
+
+        if (substr($userDir, 0, 1) == '/') {
+            $userDir = substr($userDir, 1);
+        }
+
+        $userDir = $baseDir.'/'.$userDir;
+    } elseif (substr($userDir, 0, 1) == '/') {
+        $userDir = substr($userDir, 1);
+    }
+
+    $fm->setFileRoot($userDir, $docRoot);
+}

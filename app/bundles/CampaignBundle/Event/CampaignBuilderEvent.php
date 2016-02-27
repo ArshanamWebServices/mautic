@@ -28,7 +28,7 @@ class CampaignBuilderEvent extends Event
     /**
      * @var array
      */
-    private $systemChanges = array();
+    private $leadConditions  = array();
 
     /**
      * @var array
@@ -49,13 +49,15 @@ class CampaignBuilderEvent extends Event
     }
 
     /**
-     * Add an lead action to the list of available .
+     * Add an lead decision to the list of available .
      *
      * @param string $key     - a unique identifier; it is recommended that it be namespaced i.e. lead.mytrigger
      * @param array  $action - can contain the following keys:
      *                        'label'       => (required) what to display in the list
      *                        'description' => (optional) short description of event
      *                        'formType'    => (optional) name of the form type SERVICE for the action
+     *                        'formTypeOptions' => (optional) array of options to pass to the formType service
+     *                        'formTheme'   => (optional) form theme
      *                        'callback'    => (optional) callback function that will be passed when the event is triggered
      *                            The callback function should return a bool to determine if the trigger's actions
      *                            should be executed.  For example, only trigger actions for specific entities.
@@ -85,7 +87,7 @@ class CampaignBuilderEvent extends Event
     }
 
     /**
-     * Get lead actions
+     * Get lead decisions
      *
      * @return array
      */
@@ -104,96 +106,99 @@ class CampaignBuilderEvent extends Event
         return $this->leadDecisions;
     }
 
-
     /**
-     * Add an system action to the list of available .
+     * Add an lead condition to the list of available conditions.
      *
-     * @param string $key    - a unique identifier; it is recommended that it be namespaced i.e. lead.mytrigger
-     * @param array  $action - can contain the following keys:
+     * @param string $key     - a unique identifier; it is recommended that it be namespaced i.e. lead.mytrigger
+     * @param array  $condition - can contain the following keys:
      *                        'label'       => (required) what to display in the list
      *                        'description' => (optional) short description of event
      *                        'formType'    => (optional) name of the form type SERVICE for the action
+     *                        'formTypeOptions' => (optional) array of options to pass to the formType service
+     *                        'formTheme'   => (optional) form theme
      *                        'callback'    => (optional) callback function that will be passed when the event is triggered
      *                            The callback function should return a bool to determine if the trigger's actions
      *                            should be executed.  For example, only trigger actions for specific entities.
      *                            it can can receive the following arguments by name (via ReflectionMethod::invokeArgs())
      *                              mixed $eventDetails Whatever the bundle passes when triggering the event
      *                              Mautic\CoreBundle\Factory\MauticFactory $factory
-     *                              Mautic\SystemBundle\Entity\System $lead
+     *                              Mautic\LeadBundle\Entity\Lead $lead
      *                              array $event
      */
-    public function addSystemChange ($key, array $action)
+    public function addLeadCondition ($key, array $event)
     {
-        if (array_key_exists($key, $this->leadDecisions)) {
-            throw new InvalidArgumentException("The key, '$key' is already used by another system action. Please use a different key.");
+        if (array_key_exists($key, $this->leadConditions)) {
+            throw new InvalidArgumentException("The key, '$key' is already used by another lead action. Please use a different key.");
         }
 
         //check for required keys and that given functions are callable
         $this->verifyComponent(
             array('label'),
             array('callback'),
-            $action
+            $event
         );
 
-        $action['label']       = $this->translator->trans($action['label']);
-        $action['description'] = (isset($action['description'])) ? $this->translator->trans($action['description']) : '';
+        $event['label']       = $this->translator->trans($event['label']);
+        $event['description'] = (isset($event['description'])) ? $this->translator->trans($event['description']) : '';
 
-        $this->systemChanges[$key] = $action;
+        $this->leadConditions[$key] = $event;
     }
 
     /**
-     * Get lead actions
+     * Get lead conditions
      *
      * @return array
      */
-    public function getSystemChanges ()
+    public function getLeadConditions ()
     {
         static $sorted = false;
 
         if (empty($sorted)) {
-            uasort($this->systemChanges, function ($a, $b) {
+            uasort($this->leadConditions, function ($a, $b) {
                 return strnatcasecmp(
                     $a['label'], $b['label']);
             });
             $sorted = true;
         }
 
-        return $this->systemChanges;
+        return $this->leadConditions;
     }
 
     /**
-     * Add an outcome to the list of available .
+     * Add an action to the list of available .
      *
      * @param string $key     - a unique identifier; it is recommended that it be namespaced i.e. lead.action
-     * @param array  $outcome - can contain the following keys:
-     *                       'label'       => (required) what to display in the list
-     *                       'description' => (optional) short description of event
-     *                       'formType'    => (optional) name of the form type SERVICE for the action
-     *                       'callback'    => (required) callback function that will be passed when the action is triggered
+     * @param array  $action - can contain the following keys:
+     *                       'label'         => (required) what to display in the list
+     *                       'description'   => (optional) short description of event
+     *                       'formType'      => (optional) name of the form type SERVICE for the action
+     *                       'formTypeOptions' => (optional) array of options to pass to the formType service
+     *                       'formTheme'     => (optional) form theme
+     *                       'timelineTemplate' => (optional) custom template for the lead timeline
+     *                       'callback'      => (required) callback function that will be passed when the action is triggered
      *                            The callback function can receive the following arguments by name (via ReflectionMethod::invokeArgs())
      *                              Mautic\CoreBundle\Factory\MauticFactory $factory
      *                              Mautic\LeadBundle\Entity\Lead $lead
      *                              array $event
      */
-    public function addAction ($key, array $outcome)
+    public function addAction ($key, array $action)
     {
         if (array_key_exists($key, $this->actions)) {
-            throw new InvalidArgumentException("The key, '$key' is already used by another outcome. Please use a different key.");
+            throw new InvalidArgumentException("The key, '$key' is already used by another action. Please use a different key.");
         }
 
         //check for required keys and that given functions are callable
         $this->verifyComponent(
             array('label', 'callback'),
             array('callback'),
-            $outcome
+            $action
         );
 
         //translate the group
+        $action['label']       = $this->translator->trans($action['label']);
+        $action['description'] = (isset($action['description'])) ? $this->translator->trans($action['description']) : '';
 
-        $outcome['label']       = $this->translator->trans($outcome['label']);
-        $outcome['description'] = (isset($outcome['description'])) ? $this->translator->trans($outcome['description']) : '';
-
-        $this->actions[$key] = $outcome;
+        $this->actions[$key] = $action;
     }
 
     /**

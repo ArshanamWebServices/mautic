@@ -11,14 +11,6 @@ $view->extend('MauticCoreBundle:Default:content.html.php');
 $view['slots']->set('mauticContent', 'form');
 $view['slots']->set("headerTitle", $activeForm->getName());
 
-/** @var \Mautic\FormBundle\Entity\Form $activeForm */
-$actions = $activeForm->getActions();
-$activeFormActions = array();
-foreach ($activeForm->getActions() as $action) {
-    $type                    = explode('.', $action->getType());
-    $activeFormActions[$type[0]][] = $action;
-}
-
 $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actions.html.php', array(
     'item'      => $activeForm,
     'templateButtons' => array(
@@ -27,7 +19,7 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
         'delete'    => $security->hasEntityAccess($permissions['form:forms:deleteown'], $permissions['form:forms:deleteother'], $activeForm->getCreatedBy())
     ),
     'routeBase' => 'form',
-    'langVar'   => 'form.form',
+    'langVar'   => 'form',
     'customButtons'    => array(
         array(
             'attr' => array(
@@ -36,7 +28,8 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
                 'href'        => $view['router']->generate('mautic_form_action', array('objectAction' => 'preview', 'objectId' => $activeForm->getId())),
             ),
             'iconClass' => 'fa fa-camera',
-            'btnText'   => 'mautic.form.form.preview'
+            'btnText'   => 'mautic.form.form.preview',
+            'btnClass'  => 'btn btn-default btn-nospin'
         ),
         array(
             'attr' => array(
@@ -48,6 +41,8 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
         )
     )
 )));
+
+$isStandalone = $activeForm->isStandalone();
 ?>
   <!-- start: box layout -->
   <div class="box-layout">
@@ -58,7 +53,7 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
               <div class="pr-md pl-md pt-lg pb-lg">
                   <div class="box-layout">
                       <div class="col-xs-10">
-                          <p class="text-muted"><?php echo $activeForm->getDescription(); ?></p>
+                          <div class="text-muted"><?php echo $activeForm->getDescription(); ?></div>
                       </div>
                       <div class="col-xs-2 text-right">
                           <?php echo $view->render('MauticCoreBundle:Helper:publishstatus_badge.html.php', array('entity' => $activeForm)); ?>
@@ -104,39 +99,7 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
                                       </h5>
                                   </div>
                                   <div class="col-xs-6 va-m">
-                                      <div class="dropdown pull-right">
-                                          <button id="time-scopes" class="btn btn-default dropdown-toggle" type="button" data-toggle="dropdown">
-                                              <span class="button-label"><?php echo $view['translator']->trans('mautic.asset.asset.downloads.daily'); ?></span>
-                                              <span class="caret"></span>
-                                          </button>
-                                          <ul class="dropdown-menu" role="menu" aria-labelledby="time-scopes">
-                                              <li role="presentation">
-                                                  <a href="#" onclick="Mautic.updateSubmissionChart(this, 24, 'H');return false;" role="menuitem" tabindex="-1">
-                                                      <?php echo $view['translator']->trans('mautic.asset.asset.downloads.hourly'); ?>
-                                                  </a>
-                                              </li>
-                                              <li role="presentation">
-                                                  <a href="#" class="bg-primary" onclick="Mautic.updateSubmissionChart(this, 30, 'D');return false;" role="menuitem" tabindex="-1">
-                                                      <?php echo $view['translator']->trans('mautic.asset.asset.downloads.daily'); ?>
-                                                  </a>
-                                              </li>
-                                              <li role="presentation">
-                                                  <a href="#" onclick="Mautic.updateSubmissionChart(this, 20, 'W');return false;" role="menuitem" tabindex="-1">
-                                                      <?php echo $view['translator']->trans('mautic.asset.asset.downloads.weekly'); ?>
-                                                  </a>
-                                              </li>
-                                              <li role="presentation">
-                                                  <a href="#" onclick="Mautic.updateSubmissionChart(this, 24, 'M');return false;" role="menuitem" tabindex="-1">
-                                                      <?php echo $view['translator']->trans('mautic.asset.asset.downloads.monthly'); ?>
-                                                  </a>
-                                              </li>
-                                              <li role="presentation">
-                                                  <a href="#" onclick="Mautic.updateSubmissionChart(this, 10, 'Y');return false;" role="menuitem" tabindex="-1">
-                                                      <?php echo $view['translator']->trans('mautic.asset.asset.downloads.yearly'); ?>
-                                                  </a>
-                                              </li>
-                                          </ul>
-                                      </div>
+                                      <?php echo $view->render('MauticCoreBundle:Helper:graph_dateselect.html.php', array('callback' => 'updateSubmissionChart')); ?>
                                   </div>
                               </div>
                               <div class="pt-0 pl-15 pb-10 pr-15">
@@ -153,14 +116,17 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
 
               <!-- tabs controls -->
               <ul class="nav nav-tabs pr-md pl-md">
-                  <li class="active"><a href="#actions-container" role="tab" data-toggle="tab"><?php echo $view['translator']->trans('mautic.form.details.actions'); ?></a></li>
-                  <li class=""><a href="#fields-container" role="tab" data-toggle="tab"><?php echo $view['translator']->trans('mautic.form.details.fields'); ?></a></li>
+                  <?php if ($isStandalone): ?>
+                  <li class="active"><a href="#actions-container" role="tab" data-toggle="tab"><?php echo $view['translator']->trans('mautic.form.tab.actions'); ?></a></li>
+                  <?php endif; ?>
+                  <li class="<?php if (!$isStandalone) echo 'active'; ?>"><a href="#fields-container" role="tab" data-toggle="tab"><?php echo $view['translator']->trans('mautic.form.tab.fields'); ?></a></li>
               </ul>
               <!--/ tabs controls -->
           </div>
 
           <!-- start: tab-content -->
           <div class="tab-content pa-md">
+              <?php if ($isStandalone): ?>
               <!-- #actions-container -->
               <div class="tab-pane active fade in bdr-w-0" id="actions-container">
                   <?php foreach ($activeFormActions as $group => $groupActions) : ?>
@@ -195,21 +161,22 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
                               </li>
                           <?php endforeach; ?>
                       </ul>
-                  <?php endforeach; ?>
-              </div>
-              <!--/ #actions-container -->
+                    <?php endforeach; ?>
+                </div>
+                <!--/ #actions-container -->
+                <?php endif; ?>
 
-              <!-- #fields-container -->
-              <div class="tab-pane fade bdr-w-0" id="fields-container">
+                <!-- #fields-container -->
+                <div class="tab-pane fade<?php if (!$isStandalone) echo ' active in'; ?> bdr-w-0" id="fields-container">
 
-                  <h5 class="fw-sb mb-xs">Form Field</h5>
-                  <ul class="list-group mb-xs">
+                    <h5 class="fw-sb mb-xs">Form Field</h5>
+                    <ul class="list-group mb-xs">
                       <?php /** @var \Mautic\FormBundle\Entity\Field $field */
-                      foreach ($activeForm->getFields() as $field) : ?>
+                      foreach ($activeFormFields as $field) : ?>
                           <li class="list-group-item bg-auto bg-light-xs">
                               <div class="box-layout">
                                   <div class="col-md-1 va-m">
-                                      <?php $requiredTitle = $field->getIsRequired() ? 'mautic.form.details.required' : 'mautic.form.details.not_required'; ?>
+                                      <?php $requiredTitle = $field->getIsRequired() ? 'mautic.core.required' : 'mautic.core.not_required'; ?>
                                       <h3><span class="fa fa-<?php echo $field->getIsRequired() ? 'check' : 'times'; ?> text-white dark-xs" data-toggle="tooltip" data-placement="left" title="<?php echo $view['translator']->trans($requiredTitle); ?>"></span></h3>
                                   </div>
                                   <div class="col-md-7 va-m">
@@ -222,9 +189,9 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
                               </div>
                           </li>
                       <?php endforeach; ?>
-                  </ul>
-              </div>
-              <!--/ #fields-container -->
+                    </ul>
+                </div>
+                <!--/ #fields-container -->
           </div>
           <!--/ end: tab-content -->
       </div>
@@ -270,7 +237,11 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
                   </div>
                   <div class="modal-body">
                       <p><?php echo $view['translator']->trans('mautic.form.form.help.automaticcopy'); ?></p>
-                      <textarea class="form-html form-control" readonly onclick="this.setSelectionRange(0, this.value.length);">&lt;script type="text/javascript" src="<?php echo $view['router']->generate('mautic_form_generateform', array('id' => $activeForm->getId()), true); ?>"&gt;&lt;/script&gt;</textarea>
+                      <h3><?php echo $view['translator']->trans('mautic.form.form.help.automaticcopy.js'); ?></h3>
+                      <textarea class="form-control" readonly onclick="this.setSelectionRange(0, this.value.length);">&lt;script type="text/javascript" src="<?php echo $view['router']->generate('mautic_form_generateform', array('id' => $activeForm->getId()), true); ?>"&gt;&lt;/script&gt;</textarea>
+                      <h3 class="pt-lg"><?php echo $view['translator']->trans('mautic.form.form.help.automaticcopy.iframe'); ?></h3>
+                      <textarea class="form-control" readonly onclick="this.setSelectionRange(0, this.value.length);">&lt;iframe src="<?php echo $view['router']->generate('mautic_form_preview', array('id' => $activeForm->getId()), true); ?>" width="300" height="300"&gt;&lt;p&gt;Your browser does not support iframes.&lt;/p&gt;&lt;/iframe&gt;</textarea>
+                      <i><?php echo $view['translator']->trans('mautic.form.form.help.automaticcopy.iframe.note'); ?></i>
                   </div>
                   <div class="modal-footer">
                       <button type="button" class="btn btn-default" data-dismiss="modal">Close</button>
@@ -289,7 +260,12 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
                   </div>
                   <div class="panel-body">
                       <p><?php echo $view['translator']->trans('mautic.form.form.help.manualcopy'); ?></p>
-                      <textarea class="form-html form-control" readonly onclick="this.setSelectionRange(0, this.value.length);"><?php echo htmlentities($activeForm->getCachedHtml()); ?></textarea>
+
+                      <h4 class="mt-sm mb-sm"><?php echo $view['translator']->trans('mautic.form.form.help.manualcopy.script'); ?></h4>
+                      <textarea class="form-html form-control" readonly onclick="this.setSelectionRange(0, this.value.length);"><?php echo $formScript; ?></textarea>
+
+                      <h4 class="mt-sm mb-sm"><?php echo $view['translator']->trans('mautic.form.form.help.manualcopy.body'); ?></h4>
+                      <textarea class="form-html form-control" readonly onclick="this.setSelectionRange(0, this.value.length);"><?php echo $formContent; ?></textarea>
                   </div>
                   <div class="panel-footer text-right">
                       <button type="button" class="btn btn-default" data-dismiss="modal">Close</button>
@@ -301,4 +277,4 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
   </div>
   <!--/ end: box layout -->
 
-  <input type="hidden" name="formId" id="formId" value="<?php echo $activeForm->getId(); ?>" />
+  <input type="hidden" name="entityId" id="entityId" value="<?php echo $activeForm->getId(); ?>" />

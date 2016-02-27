@@ -32,32 +32,26 @@ class CategoryRepository extends CommonRepository
             ->createQueryBuilder('c')
             ->select('c');
 
-        $this->buildClauses($q, $args);
+        $args['qb'] = $q;
 
-        $query = $q->getQuery();
-
-        if (isset($args['hydration_mode'])) {
-            $mode = strtoupper($args['hydration_mode']);
-            $query->setHydrationMode(constant("\\Doctrine\\ORM\\Query::$mode"));
-        }
-
-        $results = new Paginator($query);
-
-        return $results;
+        return parent::getEntities($args);
     }
 
     /**
-     * @paran string $bundle
+     * @param        $bundle
      * @param string $search
      * @param int    $limit
      * @param int    $start
+     *
+     * @return array
      */
     public function getCategoryList($bundle, $search = '', $limit = 10, $start = 0)
     {
         $q = $this->createQueryBuilder('c');
         $q->select('partial c.{id, title, alias, color}');
 
-        $q->where('c.isPublished = true');
+        $q->where('c.isPublished = :true')
+            ->setParameter('true', true, 'boolean');
         $q->andWhere('c.bundle = :bundle')
             ->setParameter('bundle', $bundle);
 
@@ -109,31 +103,27 @@ class CategoryRepository extends CommonRepository
     protected function addSearchCommandWhereClause(&$q, $filter)
     {
         $command         = $field = $filter->command;
-        $string          = $filter->string;
         $unique          = $this->generateRandomParameterName();
-        $returnParameter = true; //returning a parameter that is not used will lead to a Doctrine error
         $expr            = false;
+
         switch ($command) {
-            case $this->translator->trans('mautic.core.searchcommand.is'):
-                switch($string) {
-                    case $this->translator->trans('mautic.core.searchcommand.ispublished'):
-                        $expr = $q->expr()->eq("c.isPublished", 1);
-                        break;
-                    case $this->translator->trans('mautic.core.searchcommand.isunpublished'):
-                        $expr = $q->expr()->eq("c.isPublished", 0);
-                        break;
-                }
-                $returnParameter = false;
+            case $this->translator->trans('mautic.core.searchcommand.ispublished'):
+                $expr = $q->expr()->eq("c.isPublished", ":$unique");
+                $string = true;
+                break;
+            case $this->translator->trans('mautic.core.searchcommand.isunpublished'):
+                $expr = $q->expr()->eq("c.isPublished", ":$unique");
+                $string = false;
                 break;
         }
 
-        $string  = ($filter->strict) ? $filter->string : "%{$filter->string}%";
         if ($expr && $filter->not) {
             $expr = $q->expr()->not($expr);
         }
+
         return array(
             $expr,
-            ($returnParameter) ? array("$unique" => $string) : array()
+            array("$unique" => $string)
         );
     }
 
@@ -143,10 +133,8 @@ class CategoryRepository extends CommonRepository
     public function getSearchCommands()
     {
         return array(
-            'mautic.core.searchcommand.is' => array(
-                'mautic.core.searchcommand.ispublished',
-                'mautic.core.searchcommand.isunpublished',
-            )
+            'mautic.core.searchcommand.ispublished',
+            'mautic.core.searchcommand.isunpublished'
         );
     }
 
@@ -159,4 +147,39 @@ class CategoryRepository extends CommonRepository
             array('c.title', 'ASC')
         );
     }
+
+    /**
+     * @param string $bundle
+     * @param string $alias
+     * @param object $entity
+     *
+     * @return mixed
+     */
+    public function checkUniqueCategoryAlias($bundle, $alias, $entity = null)
+    {
+        $q = $this->createQueryBuilder('e')
+            ->select('count(e.id) as aliascount')
+            ->where('e.alias = :alias')
+            ->andWhere('e.bundle = :bundle')
+            ->setParameter('alias', $alias)
+            ->setParameter('bundle', $bundle);
+
+        if (!empty($entity) && $entity->getId()) {
+            $q->andWhere('e.id != :id');
+            $q->setParameter('id', $entity->getId());
+        }
+
+        $results = $q->getQuery()->getSingleResult();
+
+        return $results['aliascount'];
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getTableAlias()
+    {
+        return 'c';
+    }
+
 }

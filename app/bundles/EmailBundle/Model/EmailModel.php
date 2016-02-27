@@ -9,9 +9,9 @@
 
 namespace Mautic\EmailBundle\Model;
 
-use Mautic\CoreBundle\Entity\IpAddress;
 use Mautic\CoreBundle\Helper\GraphHelper;
 use Mautic\CoreBundle\Model\FormModel;
+use Mautic\EmailBundle\Swiftmailer\Exception\BatchQueueMaxException;
 use Mautic\EmailBundle\Entity\DoNotEmail;
 use Mautic\EmailBundle\Entity\Email;
 use Mautic\EmailBundle\Entity\Stat;
@@ -19,7 +19,7 @@ use Mautic\EmailBundle\Event\EmailBuilderEvent;
 use Mautic\EmailBundle\Event\EmailEvent;
 use Mautic\EmailBundle\Event\EmailOpenEvent;
 use Mautic\EmailBundle\EmailEvents;
-use Mautic\EmailBundle\Event\EmailSendEvent;
+use Symfony\Component\EventDispatcher\Event;
 use Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException;
 
 /**
@@ -29,7 +29,6 @@ use Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException;
  */
 class EmailModel extends FormModel
 {
-
     /**
      * {@inheritdoc}
      *
@@ -38,6 +37,22 @@ class EmailModel extends FormModel
     public function getRepository ()
     {
         return $this->em->getRepository('MauticEmailBundle:Email');
+    }
+
+    /**
+     * @return \Mautic\EmailBundle\Entity\StatRepository
+     */
+    public function getStatRepository ()
+    {
+        return $this->factory->getEntityManager()->getRepository('MauticEmailBundle:Stat');
+    }
+
+    /**
+     * @return \Mautic\EmailBundle\Entity\CopyRepository
+     */
+    public function getCopyRepository ()
+    {
+        return $this->factory->getEntityManager()->getRepository('MauticEmailBundle:Copy');
     }
 
     /**
@@ -50,16 +65,8 @@ class EmailModel extends FormModel
 
     /**
      * {@inheritdoc}
-     */
-    public function getNameGetter ()
-    {
-        return "getSubject";
-    }
-
-    /**
-     * {@inheritdoc}
      *
-     * @param       $entity
+     * @param Email $entity
      * @param       $unlock
      *
      * @return mixed
@@ -67,6 +74,19 @@ class EmailModel extends FormModel
     public function saveEntity ($entity, $unlock = true)
     {
         $now = new \DateTime();
+
+        $type = $entity->getEmailType();
+        if (empty($type)) {
+            // Just in case JS failed
+            $entity->setEmailType('template');
+        }
+
+        // Ensure that list emails are published
+        if ($entity->getEmailType() == 'list') {
+            $entity->setIsPublished(true);
+            $entity->setPublishDown(null);
+            $entity->setPublishUp(null);
+        }
 
         //set the author for new pages
         if (!$entity->isNew()) {
@@ -166,6 +186,34 @@ class EmailModel extends FormModel
     }
 
     /**
+     * Delete an entity
+     *
+     * @param object $entity
+     *
+     * @return void
+     */
+    public function deleteEntity($entity)
+    {
+        $this->getRepository()->nullVariantParent($entity->getId());
+
+        return parent::deleteEntity($entity);
+    }
+
+    /**
+     * Delete an array of entities
+     *
+     * @param array $ids
+     *
+     * @return array
+     */
+    public function deleteEntities($ids)
+    {
+        $this->getRepository()->nullVariantParent($ids);
+
+        return parent::deleteEntities($ids);
+    }
+
+    /**
      * {@inheritdoc}
      *
      * @param       $entity
@@ -181,9 +229,11 @@ class EmailModel extends FormModel
         if (!$entity instanceof Email) {
             throw new MethodNotAllowedHttpException(array('Email'));
         }
-        $params = (!empty($action)) ? array('action' => $action) : array();
+        if (!empty($action)) {
+            $options['action'] = $action;
+        }
 
-        return $formFactory->create('emailform', $entity, $params);
+        return $formFactory->create('emailform', $entity, $options);
     }
 
     /**
@@ -191,7 +241,7 @@ class EmailModel extends FormModel
      *
      * @param $id
      *
-     * @return null|object
+     * @return null|Email
      */
     public function getEntity ($id = null)
     {
@@ -218,7 +268,7 @@ class EmailModel extends FormModel
      *
      * @throws \Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException
      */
-    protected function dispatchEvent ($action, &$entity, $isNew = false, $event = false)
+    protected function dispatchEvent ($action, &$entity, $isNew = false, Event $event = null)
     {
         if (!$entity instanceof Email) {
             throw new MethodNotAllowedHttpException(array('Email'));
@@ -238,7 +288,7 @@ class EmailModel extends FormModel
                 $name = EmailEvents::EMAIL_POST_DELETE;
                 break;
             default:
-                return false;
+                return null;
         }
 
         if ($this->dispatcher->hasListeners($name)) {
@@ -251,42 +301,20 @@ class EmailModel extends FormModel
 
             return $event;
         } else {
-            return false;
+            return null;
         }
     }
 
     /**
-     * Get list of entities for autopopulate fields
-     *
-     * @param $type
-     * @param $filter
-     * @param $limit
-     *
-     * @return array
-     */
-    public function getLookupResults ($type, $filter = '', $limit = 10)
-    {
-        $results = array();
-        switch ($type) {
-            case 'email':
-                $viewOther = $this->security->isGranted('email:emails:viewother');
-                $repo      = $this->getRepository();
-                $repo->setCurrentUser($this->factory->getUser());
-                $results = $repo->getEmailList($filter, $limit, 0, $viewOther);
-                break;
-        }
-
-        return $results;
-    }
-
-    /**
-     * @param      $trackingHash
+     * @param string|Stat   $stat
      * @param      $request
      * @param bool $viaBrowser
      */
-    public function hitEmail ($trackingHash, $request, $viaBrowser = false)
+    public function hitEmail ($stat, $request, $viaBrowser = false)
     {
-        $stat = $this->getEmailStatus($trackingHash);
+        if (!$stat instanceof Stat) {
+            $stat = $this->getEmailStatus($stat);
+        }
 
         if (!$stat) {
             return;
@@ -294,91 +322,145 @@ class EmailModel extends FormModel
 
         $email = $stat->getEmail();
 
-        if (!empty($stat) && (int)$stat->isRead()) {
+        if ((int) $stat->isRead()) {
             if ($viaBrowser && !$stat->getViewedInBrowser()) {
                 //opened via browser so note it
                 $stat->setViewedInBrowser($viaBrowser);
-                $this->em->persist($stat);
-                $this->em->flush();
             }
-
-            return;
         }
 
-        $stat->setIsRead(true);
-        $stat->setDateRead(new \Datetime());
-        $stat->setViewedInBrowser($viaBrowser);
+        $readDateTime = $this->factory->getDate();
+        $stat->setLastOpened($readDateTime->getDateTime());
 
-        $readCount = $email->getReadCount();
-        $readCount++;
-        $email->setReadCount($readCount);
+        $lead = $stat->getLead();
+        if ($lead !== null) {
+            /** @var \Mautic\LeadBundle\Model\LeadModel $leadModel */
+            $leadModel = $this->factory->getModel('lead');
 
-        if ($email->isVariant()) {
-            $variantReadCount = $email->getVariantReadCount();
-            $variantReadCount++;
-            $email->setVariantReadCount($variantReadCount);
+            /*
+            // @todo too many webmail clients mask IP address
+            if (!$lead->getIpAddresses()->contains($ipAddress)) {
+                $lead->addIpAddress($ipAddress);
+                $leadModel->saveEntity($lead, true);
+            }
+            */
+
+            // Set the lead as current lead
+            $leadModel->setCurrentLead($lead);
         }
 
-        $this->em->persist($email);
+        if (!$stat->getIsRead()) {
+            $stat->setIsRead(true);
+            $stat->setDateRead($readDateTime->getDateTime());
+
+            // Only up counts if associated with both an email and lead
+            if ($email && $lead) {
+                try {
+                    $this->getRepository()->upCount($email->getId(), 'read', 1, $email->isVariant());
+                } catch (\Exception $exception) {
+                    error_log($exception);
+                }
+            }
+        }
+
+        if ($viaBrowser) {
+            $stat->setViewedInBrowser($viaBrowser);
+        }
+
+        $stat->addOpenDetails(array(
+            'datetime'  => $readDateTime->toUtcString(),
+            'useragent' => $request->server->get('HTTP_USER_AGENT'),
+            'inBrowser' => $viaBrowser
+        ));
 
         //check for existing IP
         $ipAddress = $this->factory->getIpAddress();
         $stat->setIpAddress($ipAddress);
 
-        //save the IP to the lead
-        $lead = $stat->getLead();
-
-        if ($lead !== null) {
-
-            $leadModel = $this->factory->getModel('lead');
-
-            if (!$lead->getIpAddresses()->contains($ipAddress)) {
-                $lead->addIpAddress($ipAddress);
-                $leadModel->saveEntity($lead, true);
+        if ($email) {
+            if ($this->dispatcher->hasListeners(EmailEvents::EMAIL_ON_OPEN)) {
+                $event = new EmailOpenEvent($stat, $request);
+                $this->dispatcher->dispatch(EmailEvents::EMAIL_ON_OPEN, $event);
             }
-        }
-
-        if ($this->dispatcher->hasListeners(EmailEvents::EMAIL_ON_OPEN)) {
-            $event = new EmailOpenEvent($stat, $request);
-            $this->dispatcher->dispatch(EmailEvents::EMAIL_ON_OPEN, $event);
+            $this->em->persist($email);
         }
 
         $this->em->persist($stat);
         $this->em->flush();
     }
 
-
     /**
-     * Get array of email builder tokens from bundles subscribed EmailEvents::EMAIL_ON_BUILD
+     * Get array of page builder tokens from bundles subscribed PageEvents::PAGE_ON_BUILD
      *
-     * @param null|Email  $email
-     * @param null|string $component null | tokens | abTestWinnerCriteria
+     * @param null|Email   $email
+     * @param array|string $requestedComponents all | tokens | tokenSections | abTestWinnerCriteria
+     * @param null|string  $tokenFilter
      *
-     * @return mixed
+     * @return array
      */
-    public function getBuilderComponents (Email $email = null, $component = null)
+    public function getBuilderComponents (Email $email = null, $requestedComponents = 'all', $tokenFilter = null)
     {
-        static $components;
+        $singleComponent = (!is_array($requestedComponents) && $requestedComponents != 'all');
+        $components      = array();
+        $event           = new EmailBuilderEvent($this->translator, $email, $requestedComponents, $tokenFilter);
+        $this->dispatcher->dispatch(EmailEvents::EMAIL_ON_BUILD, $event);
 
-        if (empty($components)) {
-            $components = array();
-            $event      = new EmailBuilderEvent($this->translator, $email);
-            $this->dispatcher->dispatch(EmailEvents::EMAIL_ON_BUILD, $event);
-            $components['tokens']               = $event->getTokenSections();
-            $components['abTestWinnerCriteria'] = $event->getAbTestWinnerCriteria();
+        if (!is_array($requestedComponents)) {
+            $requestedComponents = array($requestedComponents);
         }
 
-        return ($component !== null && isset($components[$component])) ? $components[$component] : $components;
+        foreach ($requestedComponents as $requested) {
+            switch ($requested) {
+                case 'tokens':
+                    $components[$requested] = $event->getTokens();
+                    break;
+                case 'visualTokens':
+                    $components[$requested] = $event->getVisualTokens();
+                    break;
+                case 'tokenSections':
+                    $components[$requested] = $event->getTokenSections();
+                    break;
+                case 'abTestWinnerCriteria':
+                    $components[$requested] = $event->getAbTestWinnerCriteria();
+                    break;
+                default:
+                    $components['tokens']               = $event->getTokens();
+                    $components['tokenSections']        = $event->getTokenSections();
+                    $components['abTestWinnerCriteria'] = $event->getAbTestWinnerCriteria();
+                    break;
+            }
+        }
+
+        return ($singleComponent) ? $components[$requestedComponents[0]] : $components;
     }
 
     /**
      * @param $idHash
      *
-     * @return mixed
+     * @return Stat
      */
     public function getEmailStatus ($idHash)
     {
-        return $this->factory->getEntityManager()->getRepository('MauticEmailBundle:Stat')->getEmailStatus($idHash);
+        return $this->getStatRepository()->getEmailStatus($idHash);
+    }
+
+    /**
+     * Search for an email stat by email and lead IDs
+     *
+     * @param $emailId
+     * @param $leadId
+     *
+     * @return array
+     */
+    public function getEmailStati ($emailId, $leadId)
+    {
+        return $this->getStatRepository()->findBy(
+            array(
+                'email' => (int) $emailId,
+                'lead'  => (int) $leadId
+            ),
+            array('dateSent' => 'DESC')
+        );
     }
 
     /**
@@ -465,54 +547,72 @@ class EmailModel extends FormModel
     /**
      * Get a stats for email by list
      *
-     * @param Email $entity
+     * @param Email|int $email
+     * @param bool      $includeVariants
      *
      * @return array
      */
-    public function getEmailListStats (Email $entity)
+    public function getEmailListStats ($email, $includeVariants = false)
     {
-        $lists     = $entity->getLists();
+        if (!$email instanceof Email) {
+            $email = $this->getEntity($email);
+        }
+
+        if ($includeVariants && $email->isVariant()) {
+            $parent = $email->getVariantParent();
+            if ($parent) {
+                // $email is a variant of another
+                $children   = $parent->getVariantChildren();
+                $emailIds   = $children->getKeys();
+                $emailIds[] = $parent->getId();
+            } else {
+                $children   = $email->getVariantChildren();
+                $emailIds   = $children->getKeys();
+                $emailIds[] = $email->getId();
+            }
+        } else {
+            $emailIds = array($email->getId());
+        }
+
+        $lists     = $email->getLists();
         $listCount = count($lists);
 
         $combined = $this->translator->trans('mautic.email.lists.combined');
         $datasets = array(
-            $combined => array(0, 0, 0, 0)
+            $combined => array(0, 0, 0)
         );
 
         $labels = array(
-            $this->translator->trans('mautic.email.total'),
             $this->translator->trans('mautic.email.sent'),
             $this->translator->trans('mautic.email.read'),
             $this->translator->trans('mautic.email.failed')
         );
 
         if ($listCount) {
-            $listRepo = $this->em->getRepository('MauticLeadBundle:LeadList');
+            /** @var \Mautic\EmailBundle\Entity\StatRepository $statRepo */
             $statRepo = $this->em->getRepository('MauticEmailBundle:Stat');
 
             foreach ($lists as $l) {
                 $name = $l->getName();
 
-                $recipientCount = $listRepo->getLeadCount($l->getId());
-                $datasets[$combined][0] += $recipientCount;
+                $sentCount = $statRepo->getSentCount($emailIds, $l->getId());
+                $datasets[$combined][0] += $sentCount;
 
-                $sentCount = $statRepo->getSentCount($entity->getId(), $l->getId());
-                $datasets[$combined][1] += $sentCount;
+                $readCount = $statRepo->getReadCount($emailIds, $l->getId());
+                $datasets[$combined][1] += $readCount;
 
-                $readCount = $statRepo->getReadCount($entity->getId(), $l->getId());
-                $datasets[$combined][2] += $readCount;
-
-                $failedCount = $statRepo->getFailedCount($entity->getId(), $l->getId());
-                $datasets[$combined][3] += $failedCount;
+                $failedCount = $statRepo->getFailedCount($emailIds, $l->getId());
+                $datasets[$combined][2] += $failedCount;
 
                 $datasets[$name] = array();
 
                 $datasets[$name] = array(
-                    $recipientCount,
                     $sentCount,
                     $readCount,
                     $failedCount
                 );
+
+                $datasets[$name]['datasetKey'] = $l->getId();
             }
         }
 
@@ -526,41 +626,168 @@ class EmailModel extends FormModel
     }
 
     /**
+     * @param int|Email $email
+     * @param bool      $includeVariants
+     * @param int       $amount
+     * @param string    $unit
+     *
+     * @return array
+     */
+    public function getEmailGeneralStats ($email, $includeVariants = false, $amount = 30, $unit = 'D')
+    {
+        if (!$email instanceof Email) {
+            $email = $this->getEntity($email);
+        }
+
+        if ($includeVariants && $email->isVariant()) {
+            $parent = $email->getVariantParent();
+            if ($parent) {
+                // $email is a variant of another
+                $children   = $parent->getVariantChildren();
+                $emailIds   = $children->getKeys();
+                $emailIds[] = $parent->getId();
+            } else {
+                $children   = $email->getVariantChildren();
+                $emailIds   = $children->getKeys();
+                $emailIds[] = $email->getId();
+            }
+        } else {
+            $emailIds = array($email->getId());
+        }
+
+        /** @var \Mautic\EmailBundle\Entity\StatRepository $statRepo */
+        $statRepo = $this->em->getRepository('MauticEmailBundle:Stat');
+
+        $graphData = GraphHelper::prepareDatetimeLineGraphData($amount, $unit,
+            array(
+                $this->translator->trans('mautic.email.stat.sent'),
+                $this->translator->trans('mautic.email.stat.read'),
+                $this->translator->trans('mautic.email.stat.failed')
+            )
+        );
+        $fromDate = $graphData['fromDate'];
+
+        $sentData  = $statRepo->getEmailStats($emailIds, $fromDate, 'sent');
+        $graphData = GraphHelper::mergeLineGraphData($graphData, $sentData, $unit, 0, 'date', 'data');
+
+        $readData  = $statRepo->getEmailStats($emailIds, $fromDate, 'read');
+        $graphData = GraphHelper::mergeLineGraphData($graphData, $readData, $unit, 1, 'date', 'data');
+
+        $failedData  = $statRepo->getEmailStats($emailIds, $fromDate, 'failed');
+        $graphData = GraphHelper::mergeLineGraphData($graphData, $failedData, $unit, 2, 'date', 'data');
+
+        return $graphData;
+    }
+
+    /**
+     * Get an array of tracked links
+     *
+     * @param $emailId
+     *
+     * @return array
+     */
+    public function getEmailClickStats($emailId)
+    {
+        return $this->factory->getModel('page.redirect')->getRedirectListBySource('email', $emailId);
+    }
+
+    /**
+     * Get the number of leads this email will be sent to
+     *
+     * @param Email $email
+     * @param mixed $listId          Leads for a specific lead list
+     * @param bool  $countOnly       If true, return count otherwise array of leads
+     * @param int   $limit           Max number of leads to retrieve
+     * @param bool  $includeVariants If false, emails sent to a variant will not be included
+     *
+     * @return int|array
+     */
+    public function getPendingLeads(Email $email, $listId = null, $countOnly = false, $limit = null, $includeVariants = true)
+    {
+        if ($includeVariants && $email->isVariant()) {
+            $parent = $email->getVariantParent();
+            if ($parent) {
+                // $email is a variant of another
+                $ids[] = $parent->getId();
+
+                $children   = $parent->getVariantChildren();
+                $variantIds = $children->getKeys();
+
+                // Remove $email from the array
+                $key = array_search($email->getId(), $variantIds);
+                unset($variantIds[$key]);
+            } else {
+                $children   = $email->getVariantChildren();
+                $variantIds = $children->getKeys();
+            }
+        } else {
+            $variantIds = null;
+        }
+
+        $total = $this->getRepository()->getEmailPendingLeads($email->getId(), $variantIds, $listId, $countOnly, $limit);
+
+        return $total;
+    }
+
+    /**
      * Send an email to lead lists
      *
      * @param Email $email
      * @param array $lists
+     * @param int   $limit
+     * @return array array(int $sentCount, int $failedCount, array $failedRecipientsByList)
      */
-    public function sendEmailToLists (Email $email, $lists = null)
+    public function sendEmailToLists (Email $email, $lists = null, $limit = null)
     {
         //get the leads
         if (empty($lists)) {
             $lists = $email->getLists();
         }
 
-        $listModel = $this->factory->getModel('lead.list');
-        $listLeads = $listModel->getLeadsByList($lists);
-
         //get email settings such as templates, weights, etc
         $emailSettings = $this->getEmailSettings($email);
-        $saveEntities  = array();
+        $options       = array(
+            'source'        => array('email', $email->getId()),
+            'emailSettings' => $emailSettings,
+            'allowResends'  => false,
+            'customHeaders' => array(
+                'Precedence' => 'Bulk'
+            )
+        );
 
-        foreach ($listLeads as $listId => $leads) {
-            $listSaveEntities = $this->sendEmail($email, $leads, array('email', $email->getId()), $emailSettings, $listId, true);
-            if (!empty($listSaveEntities)) {
-                $saveEntities = array_merge($saveEntities, $listSaveEntities);
+        $failed      = array();
+        $sentCount   = 0;
+        $failedCount = 0;
+
+        foreach ($lists as $list) {
+            if ($limit !== null && $limit <= 0) {
+                // Hit the max for this batch
+                break;
+            }
+
+            $options['listId'] = $list->getId();
+            $leads             = $this->getPendingLeads($email, $list->getId(), false, $limit);
+            $leadCount         = count($leads);
+            $sentCount        += $leadCount;
+
+            if ($limit != null) {
+                // Only retrieve the difference between what has already been sent and the limit
+                $limit -= $leadCount;
+            }
+
+            $listErrors = $this->sendEmail($email, $leads, $options);
+
+            if (!empty($listErrors)) {
+                $listFailedCount = count($listErrors);
+
+                $sentCount   -= $listFailedCount;
+                $failedCount += $listFailedCount;
+
+                $failed[$options['listId']] = $listErrors;
             }
         }
 
-        //set the sent count and save
-        foreach ($emailSettings as $e) {
-            $saveEntities[] = $e['entity'];
-        }
-
-        if (!empty($saveEntities)) {
-            //save the stats and emails
-            $this->saveEntities($saveEntities);
-        }
+        return array($sentCount, $failedCount, $failed);
     }
 
     /**
@@ -578,16 +805,17 @@ class EmailModel extends FormModel
         if (empty($emailSettings[$email->getId()])) {
 
             //used to house slots so they don't have to be fetched over and over for same template
-            $slots            = array();
-            $template         = $email->getTemplate();
-            $slots[$template] = $this->factory->getTheme($template)->getSlots('email');
+            $slots = array();
+            if ($template = $email->getTemplate()) {
+                $slots[$template] = $this->factory->getTheme($template)->getSlots('email');
+            }
 
             //store the settings of all the variants in order to properly disperse the emails
             //set the parent's settings
             $emailSettings = array(
                 $email->getId() => array(
                     'template'     => $email->getTemplate(),
-                    'slots'        => $this->factory->getTheme($email->getTemplate())->getSlots('email'),
+                    'slots'        => $slots,
                     'sentCount'    => $email->getSentCount(),
                     'variantCount' => $email->getVariantSentCount(),
                     'entity'       => $email
@@ -598,19 +826,20 @@ class EmailModel extends FormModel
                 //get a list of variants for A/B testing
                 $childrenVariant = $email->getVariantChildren();
 
-
                 if (count($childrenVariant)) {
                     $variantWeight = 0;
                     $totalSent     = $email->getVariantSentCount();
 
                     foreach ($childrenVariant as $id => $child) {
                         if ($child->isPublished()) {
-                            $template = $child->getTemplate();
-                            if (isset($slots[$template])) {
-                                $useSlots = $slots[$template];
-                            } else {
-                                $slots[$template] = $this->factory->getTheme($template())->getSlots('email');
-                                $useSlots         = $slots[$template];
+                            $useSlots = array();
+                            if ($template = $child->getTemplate()) {
+                                if (isset($slots[$template])) {
+                                    $useSlots = $slots[$template];
+                                } else {
+                                    $slots[$template] = $this->factory->getTheme($template)->getSlots('email');
+                                    $useSlots         = $slots[$template];
+                                }
                             }
                             $variantSettings = $child->getVariantSettings();
 
@@ -651,26 +880,42 @@ class EmailModel extends FormModel
      *
      * @param       $email
      * @param       $leads
-     * @param       $source array('model', 'id')
-     * @param array $emailSettings
-     * @param null  $listId
-     * @param bool  $returnEntities
+     * @param       $options = array()
+     *     array source array('model', 'id')
+     *     array emailSettings
+     *     int   listId
+     *     bool  allowResends     If false, exact emails (by id) already sent to the lead will not be resent
+     *     bool  ignoreDNC        If true, emails listed in the do not contact table will still get the email
+     *     bool  sendBatchMail    If false, the function will not send batched mail but will defer to calling function to handle it
+     *     array assetAttachments Array of optional Asset IDs to attach
      *
      * @return mixed
      * @throws \Doctrine\ORM\ORMException
      */
-    public function sendEmail ($email, $leads, $source = null, $emailSettings = array(), $listId = null, $returnEntities = false)
+    public function sendEmail ($email, $leads, $options = array())
     {
+        $source           = (isset($options['source'])) ? $options['source'] : null;
+        $emailSettings    = (isset($options['emailSettings'])) ? $options['emailSettings'] : array();
+        $listId           = (isset($options['listId'])) ? $options['listId'] : null;
+        $ignoreDNC        = (isset($options['ignoreDNC'])) ? $options['ignoreDNC'] : false;
+        $allowResends     = (isset($options['allowResends'])) ? $options['allowResends'] : true;
+        $tokens           = (isset($options['tokens'])) ? $options['tokens'] : array();
+        $sendBatchMail    = (isset($options['sendBatchMail'])) ? $options['sendBatchMail'] : true;
+        $assetAttachments = (isset($options['assetAttachments'])) ? $options['assetAttachments'] : array();
+        $customHeaders    = (isset($options['customHeaders'])) ? $options['customHeaders'] : array();
+
         if (!$email->getId()) {
-            return ($returnEntities) ? array() : false;
+            return false;
         }
 
+        $singleEmail = false;
         if (isset($leads['id'])) {
+            $singleEmail = true;
             $leads = array($leads['id'] => $leads);
         }
 
         /** @var \Mautic\EmailBundle\Entity\StatRepository $statRepo */
-        $statRepo = $this->em->getRepository('MauticEmailBundle:Stat');
+        $statRepo  = $this->em->getRepository('MauticEmailBundle:Stat');
         /** @var \Mautic\EmailBundle\Entity\EmailRepository $emailRepo */
         $emailRepo = $this->getRepository();
 
@@ -679,20 +924,29 @@ class EmailModel extends FormModel
             $emailSettings = $this->getEmailSettings($email);
         }
 
-        //get the list of do not contacts
-        static $dnc = array();
-        if (empty($dnc)) {
-            $dnc = $emailRepo->getDoNotEmailList();
+        if (!$allowResends) {
+            static $sent = array();
+            if (!isset($sent[$email->getId()])) {
+                $sent[$email->getId()] = $statRepo->getSentStats($email->getId(), $listId);
+            }
+            $sendTo = array_diff_key($leads, $sent[$email->getId()]);
+        } else {
+            $sendTo = $leads;
         }
 
-        $sent   = $statRepo->getSentStats($email->getId(), $listId);
-        $sendTo = array_diff_key($leads, $sent);
+        if (!$ignoreDNC) {
+            //get the list of do not contacts
+            static $dnc;
+            if (!is_array($dnc)) {
+                $dnc = $emailRepo->getDoNotEmailList();
+            }
 
-        //weed out do not contacts
-        if (!empty($dnc)) {
-            foreach ($sendTo as $k => $lead) {
-                if (in_array($lead['email'], $dnc)) {
-                    unset($sendTo[$k]);
+            //weed out do not contacts
+            if (!empty($dnc)) {
+                foreach ($sendTo as $k => $lead) {
+                    if (in_array(strtolower($lead['email']), $dnc)) {
+                        unset($sendTo[$k]);
+                    }
                 }
             }
         }
@@ -702,102 +956,183 @@ class EmailModel extends FormModel
 
         //noone to send to so bail
         if (empty($count)) {
-            return array();
+            return $singleEmail ? true : array();
         }
 
         //how many of this batch should go to which email
         $batchCount = 0;
 
+        $backup = reset($emailSettings);
         foreach ($emailSettings as $eid => &$details) {
             if (isset($details['weight'])) {
-                $details['limit'] = round($count * $details['weight']);
+                $limit = round($count * $details['weight']);
+
+                if (!$limit) {
+                    // Don't send any emails to this one
+                    unset($emailSettings[$eid]);
+                } else {
+                    $details['limit'] = $limit;
+                }
             } else {
                 $details['limit'] = $count;
             }
+        }
+
+        if (count($emailSettings) == 0) {
+            // Shouldn't happen but a safety catch
+            $emailSettings[$backup['entity']->getId()] = $backup;
         }
 
         //randomize the leads for statistic purposes
         shuffle($sendTo);
 
         //start at the beginning for this batch
-        $useEmail     = reset($emailSettings);
-        $saveEntities = array();
+        $useEmail = reset($emailSettings);
+        $errors   = array();
+        // Store stat entities
+        $saveEntities    = array();
+        $emailSentCounts = array();
+
+        $mailer = $this->factory->getMailer(!$sendBatchMail);
+
+        $contentGenerated = false;
+
+        $flushQueue = function($reset = true) use (&$mailer, &$saveEntities, &$errors, &$emailSentCounts, $sendBatchMail) {
+
+            if ($sendBatchMail) {
+                $flushResult = $mailer->flushQueue();
+                if (!$flushResult) {
+                    $sendFailures = $mailer->getErrors();
+
+                    // Check to see if failed recipients were stored by the transport
+                    if (!empty($sendFailures['failures'])) {
+                        // Prevent the stat from saving
+                        foreach ($sendFailures['failures'] as $failedEmail) {
+                            // Add lead ID to list of failures
+                            $errors[$saveEntities[$failedEmail]->getLead()->getId()] = $failedEmail;
+
+                            // Down sent counts
+                            $emailId = $saveEntities[$failedEmail]->getEmail()->getId();
+                            $emailSentCounts[$emailId]++;
+
+                            // Delete the stat
+                            unset($saveEntities[$failedEmail]);
+                        }
+                    }
+                }
+
+                if ($reset) {
+                    $mailer->reset(true);
+                }
+
+                return $flushResult;
+            }
+
+            return true;
+        };
+
         foreach ($sendTo as $lead) {
+            // Generate content
+            if ($useEmail['entity']->getId() !== $contentGenerated) {
+                // Flush the mail queue if applicable
+                $flushQueue();
+
+                $contentGenerated = $useEmail['entity']->getId();
+
+                // Use batching/tokenization if supported
+                $mailer->useMailerTokenization();
+                $mailer->setSource($source);
+                $mailer->setEmail($useEmail['entity'], true, $useEmail['slots'], $assetAttachments);
+
+                if (!empty($customHeaders)) {
+                    $mailer->setCustomHeaders($customHeaders);
+                }
+            }
+
             $idHash = uniqid();
 
-            $mailer = $this->factory->getMailer();
+            // Add tracking pixel token
+            if (!empty($tokens)) {
+                $mailer->setTokens($tokens);
+            }
 
             $mailer->setLead($lead);
             $mailer->setIdHash($idHash);
-            $mailer->setSource($source);
-            $mailer->setEmail($useEmail['entity']);
 
-            if ($useEmail['entity']->getContentMode() == 'builder') {
-                $mailer->setTemplate('MauticEmailBundle::public.html.php', array(
-                    'slots'    => $useEmail['slots'],
-                    'content'  => $useEmail['entity']->getContent(),
-                    'email'    => $useEmail['entity'],
-                    'template' => $useEmail['template'],
-                    'idHash'   => $idHash
-                ));
-            } else {
-                $mailer->setBody($useEmail['entity']->getCustomHtml());
+            try {
+                if (!$mailer->addTo($lead['email'], $lead['firstname'] . ' ' . $lead['lastname'])) {
+                    // Clear the errors so it doesn't stop the next send
+                    $mailer->clearErrors();
+
+                    // Bad email so note and continue
+                    $errors[$lead['id']] = $lead['email'];
+
+                    continue;
+                }
+            } catch (BatchQueueMaxException $e) {
+                // Queue full so flush then try again
+                $flushQueue(false);
+
+                $mailer->addTo($lead['email'], $lead['firstname'] . ' ' . $lead['lastname']);
             }
 
-            $mailer->message->setTo(array($lead['email'] => $lead['firstname'] . ' ' . $lead['lastname']));
-            $mailer->message->setSubject($useEmail['entity']->getSubject());
+            //queue or send the message
+            if (!$mailer->queue(true)) {
+                $errors[$lead['id']] = $lead['email'];
 
-            if ($plaintext = $useEmail['entity']->getPlainText()) {
-                $mailer->message->addPart($plaintext, 'text/plain');
+                continue;
             }
 
-            //add the trackingID to the $message object in order to update the stats if the email failed to send
-            $mailer->message->leadIdHash = $idHash;
-
-            //queue the message
-            $mailer->send(true);
-
-            //save some memory
-            unset($mailer);
+            if (!$allowResends) {
+                $sent[$useEmail['entity']->getId()][$lead['id']] = $lead['id'];
+            }
 
             //create a stat
-            $stat = new Stat();
-            $stat->setDateSent(new \DateTime());
-            //use reference to set the email to avoid persist errors
-            $stat->setEmail($useEmail['entity']);
-            $stat->setLead($this->em->getReference('MauticLeadBundle:Lead', $lead['id']));
-            if ($listId) {
-                $stat->setList($this->em->getReference('MauticLeadBundle:LeadList', $listId));
-            }
-            $stat->setEmailAddress($lead['email']);
-            $stat->setTrackingHash($idHash);
-            if (!empty($source)) {
-                $stat->setSource($source[0]);
-                $stat->setSourceId($source[1]);
-            }
+            $saveEntities[$lead['email']] = $mailer->createEmailStat(false, null, $listId);
 
-            $saveEntities[] = $stat;
-
-            //increase the sent counts
-            $useEmail['entity']->upSentCounts();
+            // Up sent counts
+            $emailId = $useEmail['entity']->getId();
+            if (!isset($emailSentCounts[$emailId])) {
+                $emailSentCounts[$emailId] = 0;
+            }
+            $emailSentCounts[$emailId]++;
 
             $batchCount++;
-            if ($batchCount > $useEmail['limit']) {
-                $saveEntities[] = $useEmail['entity'];
+            if ($batchCount >= $useEmail['limit']) {
+                unset($useEmail);
+
                 //use the next email
                 $batchCount = 0;
                 $useEmail   = next($emailSettings);
             }
         }
-        unset($sent, $sendTo);
 
-        if ($returnEntities) {
-            return $saveEntities;
-        } else {
-            $this->saveEntities($saveEntities);
+        // Send batched mail if applicable
+        $flushQueue();
 
-            return true;
+        // Persist stats
+        $statRepo->saveEntities($saveEntities);
+
+        // Update sent counts
+        foreach($emailSentCounts as $emailId => $count) {
+            $isVariant = $emailSettings[$emailId]['entity']->getVariantStartDate();
+
+            try {
+                $this->getRepository()->upCount($emailId, 'sent', $count, !empty($isVariant));
+            } catch (\Exception $exception) {
+                error_log($exception);
+            }
         }
+
+        // Free RAM
+        foreach ($saveEntities as $stat) {
+            $this->em->detach($stat);
+            unset($stat);
+        }
+
+        unset($emailSentCounts, $emailSettings, $options, $tokens, $useEmail, $sendTo);
+
+        return $singleEmail ? (empty($errors)) : $errors;
     }
 
     /**
@@ -805,11 +1140,15 @@ class EmailModel extends FormModel
      *
      * @param       $email
      * @param       $users
+     * @param mixed $lead
+     * @param array $tokens
+     * @param array $assetAttachments
+     * @param bool  $saveStat
      *
      * @return mixed
      * @throws \Doctrine\ORM\ORMException
      */
-    public function sendEmailToUser ($email, $users)
+    public function sendEmailToUser ($email, $users, $lead = null, $tokens = array(), $assetAttachments = array(), $saveStat = true)
     {
         if (!$emailId = $email->getId()) {
             return false;
@@ -828,8 +1167,16 @@ class EmailModel extends FormModel
             return false;
         }
 
+        $mailer = $this->factory->getMailer();
+        $mailer->setLead($lead, true);
+        $mailer->setTokens($tokens);
+        $mailer->setEmail($email, false, $emailSettings[$emailId]['slots'], $assetAttachments, (!$saveStat));
+
+        $mailer->useMailerTokenization();
+
         foreach ($users as $user) {
             $idHash = uniqid();
+            $mailer->setIdHash($idHash);
 
             if (!is_array($user)) {
                 $id   = $user;
@@ -847,41 +1194,33 @@ class EmailModel extends FormModel
                 $user['lastname']  = $userEntity->getLastName();
             }
 
-            $mailer = $this->factory->getMailer();
+            $mailer->setTo($user['email'], $user['firstname'] . ' ' . $user['lastname']);
 
-            if ($email->getContentMode() == 'builder') {
-                $mailer->setTemplate('MauticEmailBundle::public.html.php', array(
-                    'slots'    => $emailSettings[$emailId]['slots'],
-                    'content'  => $email->getContent(),
-                    'email'    => $email,
-                    'template' => $emailSettings[$emailId]['template'],
-                    'idHash'   => $idHash
-                ));
-            } else {
-                $mailer->setBody($email->getCustomHtml());
+            $mailer->queue(true);
+
+            if ($saveStat) {
+                $saveEntities[] = $mailer->createEmailStat(false, $user['email']);
             }
-
-            $mailer->message->setTo(array($user['email'] => $user['firstname'] . ' ' . $user['lastname']));
-            $mailer->message->setSubject($email->getSubject());
-
-            if ($plaintext = $email->getPlainText()) {
-                $mailer->message->addPart($plaintext, 'text/plain');
-            }
-
-            //queue the message
-            $mailer->send(true);
-
-            //save some memory
-            unset($mailer);
         }
+
+        //flush the message
+        $mailer->flushQueue();
+
+        if (isset($saveEntities)) {
+            $this->getStatRepository()->saveEntities($saveEntities);
+        }
+
+        //save some memory
+        unset($mailer);
     }
 
     /**
      * @param Stat   $stat
      * @param        $reason
      * @param string $tag
+     * @param bool   $flush
      */
-    public function setDoNotContact (Stat $stat, $reason, $tag = 'bounced')
+    public function setDoNotContact (Stat $stat, $reason, $tag = 'bounced', $flush = true)
     {
         $lead    = $stat->getLead();
         $email   = $stat->getEmail();
@@ -890,26 +1229,96 @@ class EmailModel extends FormModel
         $repo = $this->getRepository();
         if (!$repo->checkDoNotEmail($address)) {
             $dnc = new DoNotEmail();
-            $dnc->setEmail($email);
-            $dnc->setLead($lead);
+            if ($email != null) {
+                $dnc->setEmail($email);
+            }
+            if ($lead) {
+                $dnc->setLead($lead);
+            }
             $dnc->setEmailAddress($address);
             $dnc->setDateAdded(new \DateTime());
-            $dnc->{"set" . ucfirst($tag)}();
+            $method = 'set'.ucfirst($tag);
+            if (method_exists($dnc, $method)) {
+                $method = 'setBounced';
+            }
+            $dnc->$method();
             $dnc->setComments($reason);
 
             $em = $this->factory->getEntityManager();
             $em->persist($dnc);
 
-            //update stats
-            $stat->setIsFailed(true);
-            $em->persist($stat);
+            if ($flush) {
+                $em->flush();
+            }
+        }
+    }
 
-            if ($email !== null) {
-                $email->downSentCounts();
-                $em->persist($email);
+    /**
+     * @param           $email
+     * @param string    $tag
+     * @param string    $reason
+     * @param bool|true $flush
+     * @param int|null  $leadId
+     */
+    public function setEmailDoNotContact($email, $tag = 'bounced', $reason = '', $flush = true, $leadId = null)
+    {
+        $repo = $this->getRepository();
+        $dnc  = $repo->checkDoNotEmail($email);
+
+        if (false === $dnc) {
+            if (null == $leadId) {
+                // Check to see if a lead exists with this email
+                /** @var \Mautic\LeadBundle\Model\LeadModel $leadModel */
+                $leadModel = $this->factory->getModel('lead');
+                $leadRepo  = $leadModel->getRepository();
+                $foundLead = $leadRepo->getLeadByEmail($email);
+                $lead      = (null !== $foundLead) ? $this->em->getReference('MauticLeadBundle:Lead', $foundLead['id']) : null;
+            } else {
+                $lead = $this->em->getReference('MauticLeadBundle:Lead', $leadId);
             }
 
-            $em->flush();
+            $dnc = new DoNotEmail();
+            $dnc->setEmailAddress($email);
+            $dnc->setLead($lead);
+            $dnc->setDateAdded(new \DateTime());
+
+            $method = 'set'.ucfirst($tag);
+            if (method_exists($dnc, $method)) {
+                $method = 'setBounced';
+            }
+            $dnc->$method();
+            $dnc->setComments($reason);
+
+            $this->em->persist($dnc);
+
+            if ($flush) {
+                $this->em->flush($dnc);
+            }
+        } elseif ($dnc['bounced']) {
+            // Update the entry
+            /** @var \Mautic\EmailBundle\Entity\DoNotEmail $dncEntity */
+            $dncEntity = $this->em->getReference('MauticEmailBundle:DoNotEmail', $dnc['id']);
+
+            if ('unsubscribed' == $tag) {
+                // Unsubscribe user so they cannot be contacted
+                $dncEntity->setBounced(false);
+                $dncEntity->setUnsubscribed(true);
+            }
+
+            if (null !== $leadId) {
+                $dncEntity->setLead(
+                    $this->em->getReference('MauticLeadBundle:Lead', $leadId)
+                );
+            }
+
+            $dncEntity->setDateAdded(new \DateTime());
+            $dncEntity->setComments($reason);
+
+            $this->em->persist($dncEntity);
+
+            if ($flush) {
+                $this->em->flush($dncEntity);
+            }
         }
     }
 
@@ -921,5 +1330,115 @@ class EmailModel extends FormModel
     public function removeDoNotContact ($email)
     {
         $this->getRepository()->removeFromDoNotEmailList($email);
+    }
+
+    /**
+     * Processes the callback response from a mailer for bounces and unsubscribes
+     *
+     * @param array $response
+     */
+    public function processMailerCallback(array $response)
+    {
+        if (empty($response)) {
+
+            return;
+        }
+
+        $batch = 20;
+        $count = 0;
+
+        $statRepo = $this->getStatRepository();
+        $alias    = $statRepo->getTableAlias();
+        if (!empty($alias)) {
+            $alias .= '.';
+        }
+
+        // Keep track to prevent duplicates before flushing
+        $emails = array();
+
+        foreach ($response as $type => $entries) {
+            if (!empty($entries['hashIds'])) {
+                $stats = $this->getStatRepository()->getEntities(
+                    array(
+                        'filter' => array(
+                            'force' => array(
+                                array(
+                                    'column' => $alias.'trackingHash',
+                                    'expr'   => 'in',
+                                    'value'  => array_keys($entries['hashIds'])
+                                )
+                            )
+                        )
+                    )
+                );
+
+                /** @var \Mautic\EmailBundle\Entity\Stat $s */
+                foreach ($stats as $s) {
+                    $reason = $entries['hashIds'][$s->getTrackingHash()];
+                    if ($this->translator->hasId('mautic.email.bounce.reason.'.$reason)) {
+                        $reason = $this->translator->trans('mautic.email.bounce.reason.'.$reason);
+                    }
+
+                    $this->setDoNotContact($s, $reason , $type, ($count === $batch));
+
+                    $s->setIsFailed(true);
+                    $this->em->persist($s);
+
+                    if ($count === $batch) {
+                        $count = 0;
+                    }
+                }
+            }
+
+            if (!empty($entries['emails'])) {
+                foreach ($entries['emails'] as $email => $reason) {
+                    if (in_array($email, $emails)) {
+
+                        continue;
+                    }
+                    $emails[] = $email;
+
+                    $leadId = null;
+                    if (is_array($reason)) {
+                        // Includes a lead ID
+                        $leadId = $reason['leadId'];
+                        $reason = $reason['reason'];
+                    }
+
+                    if ($this->translator->hasId('mautic.email.bounce.reason.'.$reason)) {
+                        $reason = $this->translator->trans('mautic.email.bounce.reason.'.$reason);
+                    }
+
+                    $this->setEmailDoNotContact($email, $type, $reason, ($count === $batch), $leadId);
+
+                    if ($count === $batch) {
+                        $count = 0;
+                    }
+                }
+            }
+        }
+
+        $this->em->flush();
+    }
+
+    /**
+     * Get the settings for a monitored mailbox or false if not enabled
+     *
+     * @param $bundleKey
+     * @param $folderKey
+     *
+     * @return bool|array
+     */
+    public function getMonitoredMailbox($bundleKey, $folderKey)
+    {
+        /** @var \Mautic\EmailBundle\MonitoredEmail\Mailbox $mailboxHelper */
+        $mailboxHelper = $this->factory->getHelper('mailbox');
+
+        if ($mailboxHelper->isConfigured($bundleKey, $folderKey)) {
+
+            return $mailboxHelper->getMailboxSettings();
+        }
+
+        return false;
     }
 }

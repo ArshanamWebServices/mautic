@@ -24,9 +24,18 @@ use Symfony\Component\OptionsResolver\OptionsResolverInterface;
  */
 class AssetType extends AbstractType
 {
-
+    /**
+     * @var \Mautic\CoreBundle\Translation\Translator
+     */
     private $translator;
+
+    /**
+     * @var array
+     */
     private $themes;
+
+    /** @var \Mautic\AssetBundle\Model\AssetModel */
+    private $assetModel;
 
     /**
      * @param MauticFactory $factory
@@ -34,6 +43,7 @@ class AssetType extends AbstractType
     public function __construct(MauticFactory $factory) {
         $this->translator = $factory->getTranslator();
         $this->themes     = $factory->getInstalledThemes('asset');
+        $this->assetModel = $factory->getModel('asset');
     }
 
     /**
@@ -42,25 +52,46 @@ class AssetType extends AbstractType
      */
     public function buildForm (FormBuilderInterface $builder, array $options)
     {
-        $builder->addEventSubscriber(new CleanFormSubscriber(array('description' => 'html', 'file' => 'raw')));
+        $builder->addEventSubscriber(new CleanFormSubscriber(array('description' => 'html')));
         $builder->addEventSubscriber(new FormExitSubscriber('asset.asset', $options));
 
+        $builder->add('storageLocation', 'button_group', array(
+            'label' => 'mautic.asset.asset.form.storageLocation',
+            'choice_list' => new ChoiceList(
+                array('local', 'remote'),
+                array('mautic.asset.asset.form.storageLocation.local', 'mautic.asset.asset.form.storageLocation.remote')
+            ),
+            'attr' => array(
+                'onchange' => 'Mautic.changeAssetStorageLocation();'
+            )
+        ));
 
-        $builder->add('file', 'file', array(
-            'label'      => 'mautic.asset.asset.form.file.upload',
+        $maxUploadSize = $this->assetModel->getMaxUploadSize('', true);
+        $builder->add('tempName', 'hidden', array(
+            'label'      => $this->translator->trans('mautic.asset.asset.form.file.upload', array('%max%' => $maxUploadSize)),
+            'label_attr' => array('class' => 'control-label'),
+            'required'   => false
+        ));
+
+        $builder->add('originalFileName', 'hidden', array(
+            'required'   => false
+        ));
+
+        $builder->add('remotePath', 'text', array(
+            'label'      => 'mautic.asset.asset.form.remotePath',
             'label_attr' => array('class' => 'control-label'),
             'attr'       => array('class' => 'form-control'),
-            'required'   => true
+            'required'   => false
         ));
 
         $builder->add('title', 'text', array(
-            'label'      => 'mautic.asset.asset.form.title',
+            'label'      => 'mautic.core.title',
             'label_attr' => array('class' => 'control-label'),
             'attr'       => array('class' => 'form-control')
         ));
 
         $builder->add('alias', 'text', array(
-            'label'      => 'mautic.asset.asset.form.alias',
+            'label'      => 'mautic.core.alias',
             'label_attr' => array('class' => 'control-label'),
             'attr'       => array(
                 'class'   => 'form-control',
@@ -70,7 +101,7 @@ class AssetType extends AbstractType
         ));
 
         $builder->add('description', 'textarea', array(
-            'label'      => 'mautic.asset.asset.form.description',
+            'label'      => 'mautic.core.description',
             'label_attr' => array('class' => 'control-label'),
             'attr'       => array('class' => 'form-control editor'),
             'required'   => false
@@ -81,10 +112,10 @@ class AssetType extends AbstractType
         ));
 
         $builder->add('language', 'locale', array(
-            'label'      => 'mautic.asset.asset.form.language',
+            'label'      => 'mautic.core.language',
             'label_attr' => array('class' => 'control-label'),
             'attr'       => array(
-                'class'   => 'form-control chosen',
+                'class'   => 'form-control',
                 'tooltip' => 'mautic.asset.asset.form.language.help',
             ),
             'required'   => false
@@ -113,6 +144,10 @@ class AssetType extends AbstractType
                 'data-toggle' => 'datetime'
             ),
             'format'     => 'yyyy-MM-dd HH:mm',
+            'required'   => false
+        ));
+
+        $builder->add('tempId', 'hidden', array(
             'required'   => false
         ));
 

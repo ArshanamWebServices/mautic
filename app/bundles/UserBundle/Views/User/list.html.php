@@ -16,49 +16,47 @@ endif;
     <table class="table table-hover table-striped table-bordered user-list" id="userTable">
         <thead>
         <tr>
-            <th class="col-user-actions pl-20">
-                <div class="checkbox-inline custom-primary">
-                    <label class="mb-0 pl-10">
-                        <input type="checkbox" id="customcheckbox-one0" value="1" data-toggle="checkall" data-target="#userTable">
-                        <span></span>
-                    </label>
-                </div>
-            </th>
+            <?php
+            echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
+                'checkall' => 'true',
+                'target'   => '#userTable'
+            ));
+            ?>
             <th class="visible-md visible-lg col-user-avatar"></th>
             <?php
             echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                 'sessionVar' => 'user',
                 'orderBy'    => 'u.lastName, u.firstName, u.username',
-                'text'       => 'mautic.user.user.thead.name',
-                'class'      => 'visible-md visible-lg col-user-name',
+                'text'       => 'mautic.core.name',
+                'class'      => 'col-user-name',
                 'default'    => true
             ));
 
             echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                 'sessionVar' => 'user',
                 'orderBy'    => 'u.username',
-                'text'       => 'mautic.user.user.thead.username',
+                'text'       => 'mautic.core.username',
                 'class'      => 'col-user-username',
             ));
 
             echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                 'sessionVar' => 'user',
                 'orderBy'    => 'u.email',
-                'text'       => 'mautic.user.user.thead.email',
+                'text'       => 'mautic.core.type.email',
                 'class'      => 'visible-md visible-lg col-user-email'
             ));
 
             echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                 'sessionVar' => 'user',
                 'orderBy'    => 'r.name',
-                'text'       => 'mautic.user.user.thead.role',
+                'text'       => 'mautic.user.role',
                 'class'      => 'visible-md visible-lg col-user-role'
             ));
 
             echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                 'sessionVar' => 'user',
                 'orderBy'    => 'u.id',
-                'text'       => 'mautic.user.user.thead.id',
+                'text'       => 'mautic.core.id',
                 'class'      => 'visible-md visible-lg col-user-id'
             ));
             ?>
@@ -82,16 +80,15 @@ endif;
                     ?>
                 </td>
                 <td class="visible-md visible-lg">
-                    <img class="img img-responsive img-thumbnail"
-                         src="<?php echo $view['gravatar']->getImage($item->getEmail(), '50'); ?>" />
+                    <img class="img img-responsive img-thumbnail w-44" src="<?php echo $view['gravatar']->getImage($item->getEmail(), '50'); ?>" />
                 </td>
                 <td>
-                    <?php echo $item->getName(true); ?><br />
-                    <em><?php echo $item->getPosition(); ?></em>
+                    <div><?php echo $item->getName(true); ?></div>
+                    <div class="small"><em><?php echo $item->getPosition(); ?></em></div>
                 </td>
                 <td><?php echo $item->getUsername(); ?></td>
                 <td class="visible-md visible-lg">
-                    <a href="mailto: <?echo $item->getEmail(); ?>"><?php echo $item->getEmail(); ?></a>
+                    <a href="mailto: <?php echo $item->getEmail(); ?>"><?php echo $item->getEmail(); ?></a>
                 </td>
                 <td class="visible-md visible-lg"><?php echo $item->getRole()->getName(); ?></td>
                 <td class="visible-md visible-lg"><?php echo $item->getId(); ?></td>

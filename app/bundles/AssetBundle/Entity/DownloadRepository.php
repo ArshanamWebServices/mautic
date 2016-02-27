@@ -22,26 +22,34 @@ class DownloadRepository extends CommonRepository
 {
 
     /**
-     * Get a count of unique downloads for the current tracking ID
+     * Determine if the download is a unique download
      *
      * @param $assetId
      * @param $trackingId
      *
-     * @return int
-     * @throws \Doctrine\ORM\NoResultException
-     * @throws \Doctrine\ORM\NonUniqueResultException
+     * @return bool
      */
-    public function getDownloadCountForTrackingId($assetId, $trackingId)
+    public function isUniqueDownload($assetId, $trackingId)
     {
-        $count = $this->createQueryBuilder('d')
-            ->select('count(d.id) as num')
-            ->where('IDENTITY(d.asset) = ' .$assetId)
-            ->andWhere('d.trackingId = :id')
-            ->setParameter('id', $trackingId)
-            ->getQuery()
-            ->getSingleResult();
+        $q  = $this->getEntityManager()->getConnection()->createQueryBuilder();
+        $q2 = $this->getEntityManager()->getConnection()->createQueryBuilder();
 
-        return (int) $count['num'];
+        $q2->select('null')
+            ->from(MAUTIC_TABLE_PREFIX.'asset_downloads', 'd');
+
+        $q2->where(
+            $q2->expr()->andX(
+                $q2->expr()->eq('d.tracking_id', ':id'),
+                $q2->expr()->eq('d.asset_id', (int) $assetId)
+            )
+        );
+
+        $q->select('u.is_unique')
+            ->from(sprintf('(SELECT (NOT EXISTS (%s)) is_unique)', $q2->getSQL()), 'u'
+            )
+            ->setParameter('id', $trackingId);
+
+        return (bool) $q->execute()->fetchColumn();
     }
 
     /**
@@ -114,9 +122,7 @@ class DownloadRepository extends CommonRepository
     public function getMostDownloaded($query, $limit = 10, $offset = 0)
     {
         $query->select('a.title, a.id, count(ad.id) as downloads')
-            ->from(MAUTIC_TABLE_PREFIX.'assets', 'a')
-            ->leftJoin('a', MAUTIC_TABLE_PREFIX.'asset_downloads', 'ad', 'ad.asset_id = a.id')
-            ->groupBy('a.id')
+            ->groupBy('a.id, a.title')
             ->orderBy('downloads', 'DESC')
             ->setMaxResults($limit)
             ->setFirstResult($offset);
@@ -140,8 +146,6 @@ class DownloadRepository extends CommonRepository
     public function getTopReferrers($query, $limit = 10, $offset = 0)
     {
         $query->select('ad.referer, count(ad.referer) as downloads')
-            ->from(MAUTIC_TABLE_PREFIX.'assets', 'a')
-            ->leftJoin('a', MAUTIC_TABLE_PREFIX.'asset_downloads', 'ad', 'ad.asset_id = a.id')
             ->groupBy('ad.referer')
             ->orderBy('downloads', 'DESC')
             ->setMaxResults($limit)
@@ -164,8 +168,6 @@ class DownloadRepository extends CommonRepository
     public function getHttpStatuses($query)
     {
         $query->select('ad.code as status, count(ad.code) as count')
-            ->from(MAUTIC_TABLE_PREFIX.'assets', 'a')
-            ->leftJoin('a', MAUTIC_TABLE_PREFIX.'asset_downloads', 'ad', 'ad.asset_id = a.id')
             ->groupBy('ad.code')
             ->orderBy('count', 'DESC');
 
@@ -206,7 +208,7 @@ class DownloadRepository extends CommonRepository
 
         if (is_array($pageId)) {
             $q->where($q->expr()->in('p.id', $pageId))
-                ->groupBy('p.id');
+                ->groupBy('p.id, a.source_id, p.title, p.hits');
 
         } else {
             $q->where($q->expr()->eq('p.id', ':page'))
@@ -251,7 +253,7 @@ class DownloadRepository extends CommonRepository
 
         if (is_array($emailId)) {
             $q->where($q->expr()->in('e.id', $emailId))
-                ->groupBy('e.id');
+                ->groupBy('e.id, e.subject, e.variant_sent_count');
         } else {
             $q->where($q->expr()->eq('e.id', ':email'))
                 ->setParameter('email', (int) $emailId);
@@ -280,7 +282,7 @@ class DownloadRepository extends CommonRepository
      * @param $newTrackingId
      * @param $oldTrackingId
      */
-    public function updateLead($leadId, $newTrackingId, $oldTrackingId)
+    public function updateLeadByTrackingId($leadId, $newTrackingId, $oldTrackingId)
     {
         $q = $this->_em->getConnection()->createQueryBuilder();
         $q->update(MAUTIC_TABLE_PREFIX . 'asset_downloads')
@@ -293,6 +295,21 @@ class DownloadRepository extends CommonRepository
                 'newTrackingId' => $newTrackingId,
                 'oldTrackingId' => $oldTrackingId
             ))
+            ->execute();
+    }
+
+    /**
+     * Updates lead ID (e.g. after a lead merge)
+     *
+     * @param $fromLeadId
+     * @param $toLeadId
+     */
+    public function updateLead($fromLeadId, $toLeadId)
+    {
+        $q = $this->_em->getConnection()->createQueryBuilder();
+        $q->update(MAUTIC_TABLE_PREFIX . 'asset_downloads')
+            ->set('lead_id', (int) $toLeadId)
+            ->where('lead_id = ' . (int) $fromLeadId)
             ->execute();
     }
 }

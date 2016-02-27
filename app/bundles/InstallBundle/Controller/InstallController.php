@@ -9,21 +9,31 @@
 
 namespace Mautic\InstallBundle\Controller;
 
+use Doctrine\Common\Cache\ArrayCache;
 use Doctrine\Common\DataFixtures\Executor\ORMExecutor;
 use Doctrine\Common\DataFixtures\Purger\ORMPurger;
 use Doctrine\Common\EventManager;
+use Doctrine\Common\Persistence\Mapping\Driver\StaticPHPDriver;
 use Doctrine\DBAL\DriverManager;
+use Doctrine\DBAL\Schema\ForeignKeyConstraint;
+use Doctrine\DBAL\Schema\Index;
+use Doctrine\DBAL\Schema\Sequence;
+use Doctrine\DBAL\Schema\TableDiff;
 use Doctrine\ORM\EntityManager;
 use Doctrine\ORM\Tools\SchemaTool;
 use Doctrine\ORM\Tools\Setup;
 use Mautic\CoreBundle\Controller\CommonController;
+use Mautic\CoreBundle\Doctrine\Helper\IndexSchemaHelper;
 use Mautic\CoreBundle\EventListener\DoctrineEventsSubscriber;
 use Mautic\CoreBundle\Helper\EncryptionHelper;
 use Mautic\InstallBundle\Configurator\Step\DoctrineStep;
 use Mautic\UserBundle\Entity\User;
 use Symfony\Bridge\Doctrine\DataFixtures\ContainerAwareLoader;
+use Symfony\Component\Console\Output\BufferedOutput;
 use Symfony\Component\Form\FormError;
 use Symfony\Component\Process\Exception\RuntimeException;
+use Symfony\Component\Console\Input\ArgvInput;
+use Symfony\Bundle\FrameworkBundle\Console\Application;
 
 /**
  * InstallController.
@@ -46,12 +56,12 @@ class InstallController extends CommonController
 
         /** @var \Mautic\InstallBundle\Configurator\Configurator $configurator */
         $configurator = $this->container->get('mautic.configurator');
+        $params       = $configurator->getParameters();
+        $step         = $configurator->getStep($index);
+        $step         = $step[0];
+        $action       = $this->generateUrl('mautic_installer_step', array('index' => $index));
 
-        $action = $this->generateUrl('mautic_installer_step', array('index' => $index));
-        $step   = $configurator->getStep($index);
-
-        /** @var \Symfony\Component\Form\Form $form */
-        $form = $this->container->get('form.factory')->create($step->getFormType(), $step, array('action' => $action));
+        $form = $this->createForm($step->getFormType(), $step, array('action' => $action));
         $tmpl = $this->request->isXmlHttpRequest() ? $this->request->get('tmpl', 'index') : 'index';
 
         // Always pass the requirements into the templates
@@ -59,7 +69,13 @@ class InstallController extends CommonController
         $minors = $configurator->getOptionalSettings();
 
         $session        = $this->factory->getSession();
-        $completedSteps = $session->get('mautic.install.completedsteps', array());
+        $completedSteps = $session->get('mautic.installer.completedsteps', array());
+
+        // Check to ensure the installer is in the right place
+        if ((empty($params) || empty($params['db_driver'])) && $index > 1) {
+            $session->set('mautic.installer.completedsteps', array(0));
+            return $this->redirect($this->generateUrl('mautic_installer_step', array('index' => 1)));
+        }
 
         if ('POST' === $this->request->getMethod()) {
             $form->handleRequest($this->request);
@@ -71,14 +87,14 @@ class InstallController extends CommonController
                 } catch (RuntimeException $exception) {
                     return $this->postActionRedirect(array(
                         'viewParameters'    => array(
-                            'form'    => $form->createView(),
-                            'index'   => $index,
-                            'count'   => $configurator->getStepCount(),
-                            'version' => $this->factory->getVersion(),
-                            'tmpl'    => $tmpl,
-                            'majors'  => $majors,
-                            'minors'  => $minors,
-                            'appRoot' => $this->container->getParameter('kernel.root_dir'),
+                            'form'       => $form->createView(),
+                            'index'      => $index,
+                            'count'      => $configurator->getStepCount(),
+                            'version'    => $this->factory->getVersion(),
+                            'tmpl'       => $tmpl,
+                            'majors'     => $majors,
+                            'minors'     => $minors,
+                            'appRoot'    => $this->container->getParameter('kernel.root_dir'),
                             'configFile' => $this->factory->getLocalConfigFile()
                         ),
                         'returnUrl'         => $this->generateUrl('mautic_installer_step', array('index' => $index)),
@@ -105,21 +121,79 @@ class InstallController extends CommonController
                 switch ($index) {
                     case 1:
                         //let's create a dynamic details
-                        $dbParams           = (array)$originalData;
-                        $dbParams['dbname'] = $dbParams['name'];
-                        unset($dbParams['name']);
+                        $dbParams = (array)$originalData;
 
-                        $result = $this->performDatabaseInstallation($dbParams);
-                        if (is_array($result)) {
-                            $flashes[] = $result;
+                        //validate settings
+                        $dbValid    = false;
+                        $translator = $this->factory->getTranslator();
+                        if ($dbParams['driver'] == 'pdo_sqlite') {
+                            if (empty($dbParams['path'])) {
+                                $form['path']->addError(new FormError($translator->trans('mautic.core.value.required', array(), 'validators')));
+                            } elseif (!is_writable(dirname($dbParams['path'])) || substr($dbParams['path'], -4) != '.db3') {
+                                $form['path']->addError(new FormError($translator->trans('mautic.install.database.path.invalid', array(), 'validators')));
+                            } else {
+                                $root = $this->factory->getSystemPath('root');
+                                if (strpos(dirname($dbParams['path']), $root) !== false) {
+                                    $flashes[] = array(
+                                        'msg'     => 'mautic.install.database.path.warning',
+                                        'msgVars' => array('%root%' => $root),
+                                        'domain'  => 'validators'
+                                    );
+                                }
+                                $dbValid = true;
+                            }
+
+                            if (!file_exists($dbParams['path'])) {
+                                //create the file
+                                file_put_contents($dbParams['path'], '');
+                            }
                         } else {
-                            //write the working database details to the configuration file
-                            $configurator->mergeParameters($step->update($originalData));
-                            $configurator->write();
+                            $required = array(
+                                'host',
+                                'name',
+                                'user'
+                            );
+                            foreach ($required as $r) {
+                                if (empty($dbParams[$r])) {
+                                    $form[$r]->addError(new FormError($translator->trans('mautic.core.value.required', array(), 'validators')));
+                                }
+                            }
 
-                            $result = $this->performFixtureInstall($dbParams);
+                            if ((int) $dbParams['port'] <= 0) {
+                                $form['port']->addError(new FormError($translator->trans('mautic.install.database.port.invalid', array(), 'validators')));
+                            } else {
+                                $dbValid = true;
+                            }
+                        }
+
+                        if (!$dbValid) {
+                            $success = false;
+                        } else {
+                            $dbParams['dbname'] = $dbParams['name'];
+                            unset($dbParams['name']);
+
+                            // Support for env variables
+                            foreach ($dbParams as $k => &$v) {
+                                if (!empty($v) && is_string($v) && preg_match('/getenv\((.*?)\)/', $v, $match)) {
+                                    $v = (string) getenv($match[1]);
+                                }
+                            }
+
+                            $result = $this->performDatabaseInstallation($dbParams);
+
                             if (is_array($result)) {
                                 $flashes[] = $result;
+                                $success   = false;
+                            } else {
+                                //write the working database details to the configuration file
+                                $configurator->mergeParameters($step->update($originalData));
+                                $configurator->write();
+
+                                $result = $this->performFixtureInstall($dbParams);
+                                if (is_array($result)) {
+                                    $flashes[] = $result;
+                                    $success   = false;
+                                }
                             }
                         }
 
@@ -129,80 +203,59 @@ class InstallController extends CommonController
                         $entityManager = $this->getEntityManager();
 
                         //ensure the username and email are unique
-                        $existing = $entityManager->getRepository('MauticUserBundle:User')->checkUniqueUsernameEmail(array(
-                            'username' => $originalData->username,
-                            'email'    => $originalData->email
-                        ));
-
-                        if (!empty($existing)) {
-                            $translator = $this->factory->getTranslator();
-                            if ($existing[0]->getEmail() == $originalData->email) {
-                                $form['email']->addError(new FormError(
-                                    $translator->trans('mautic.user.user.email.unique', array(), 'validators')
-                                ));
-                            }
-
-                            if ($existing[0]->getUsername() == $originalData->username) {
-                                $form['username']->addError(new FormError(
-                                    $translator->trans('mautic.user.user.username.unique', array(), 'validators')
-                                ));
-                            }
-
-                            $success = false;
-                        } else {
-                            $result = $this->performUserAddition($form);
-                            if (is_array($result)) {
-                                $flashes[] = $result;
-                            }
+                        try {
+                            $existing = $entityManager->getRepository('MauticUserBundle:User')->find(1);
+                        } catch (\Exception $e) {
+                            $existing = null;
                         }
 
+                        if (!empty($existing)) {
+                            $result = $this->performUserAddition($form, $existing);
+                        } else {
+                            $result = $this->performUserAddition($form);
+                        }
+
+                        if (is_array($result)) {
+                            $flashes[] = $result;
+                            $success   = false;
+                        }
+
+                        //store the data
+                        unset($originalData->password);
+                        $session->set('mautic.installer.user', $originalData);
+
                         break;
+
+                    default:
+                        $success = true;
+
                 }
 
                 if ($success) {
-                    // On a failure, the result will be an array; for success it will be a boolean
-                    if (!empty($flashes)) {
-                        return $this->postActionRedirect(array(
-                            'viewParameters'    => array(
-                                'form'    => $form->createView(),
-                                'index'   => $index,
-                                'count'   => $configurator->getStepCount(),
-                                'version' => $this->factory->getVersion(),
-                                'tmpl'    => $tmpl,
-                                'majors'  => $majors,
-                                'minors'  => $minors,
-                                'appRoot' => $this->container->getParameter('kernel.root_dir'),
-                                'configFile' => $this->factory->getLocalConfigFile()
-                            ),
-                            'returnUrl'         => $this->generateUrl('mautic_installer_step', array('index' => $index)),
-                            'contentTemplate'   => $step->getTemplate(),
-                            'flashes'           => $flashes,
-                            'forwardController' => false
-                        ));
-                    }
-
                     $completedSteps[] = $index;
-                    $session->set('mautic.install.completedsteps', $completedSteps);
+                    $session->set('mautic.installer.completedsteps', $completedSteps);
                     $index++;
 
                     if ($index < $configurator->getStepCount()) {
                         $nextStep = $configurator->getStep($index);
+                        $nextStep = $nextStep[0];
                         $action   = $this->generateUrl('mautic_installer_step', array('index' => $index));
 
-                        $form = $this->container->get('form.factory')->create($nextStep->getFormType(), $nextStep, array('action' => $action));
+                        $form = $this->createForm($nextStep->getFormType(), $nextStep, array('action' => $action));
 
                         return $this->postActionRedirect(array(
                             'viewParameters'    => array(
-                                'form'    => $form->createView(),
-                                'index'   => $index,
-                                'count'   => $configurator->getStepCount(),
-                                'version' => $this->factory->getVersion(),
-                                'tmpl'    => $tmpl,
-                                'majors'  => $majors,
-                                'minors'  => $minors,
-                                'appRoot' => $this->container->getParameter('kernel.root_dir'),
+                                'form'       => $form->createView(),
+                                'index'      => $index,
+                                'count'      => $configurator->getStepCount(),
+                                'version'    => $this->factory->getVersion(),
+                                'tmpl'       => $tmpl,
+                                'majors'     => $majors,
+                                'minors'     => $minors,
+                                'appRoot'    => $this->container->getParameter('kernel.root_dir'),
                                 'configFile' => $this->factory->getLocalConfigFile()
                             ),
+                            'flashes'           => $flashes,
                             'returnUrl'         => $action,
                             'contentTemplate'   => $nextStep->getTemplate(),
                             'forwardController' => false
@@ -227,9 +280,9 @@ class InstallController extends CommonController
                     }
 
                     // Clear the cache one final time with the updated config
-                    $this->clearCacheFile();
-
-                    $session->remove('mautic.install.completedsteps');
+                    /** @var \Mautic\CoreBundle\Helper\CacheHelper $cacheHelper */
+                    $cacheHelper = $this->factory->getHelper('cache');
+                    $cacheHelper->clearContainerFile();
 
                     return $this->postActionRedirect(array(
                         'viewParameters'    => array(
@@ -245,28 +298,45 @@ class InstallController extends CommonController
                         'flashes'           => $flashes,
                         'forwardController' => false
                     ));
+                } elseif (!empty($flashes)) {
+                    return $this->postActionRedirect(array(
+                        'viewParameters'    => array(
+                            'form'       => $form->createView(),
+                            'index'      => $index,
+                            'count'      => $configurator->getStepCount(),
+                            'version'    => $this->factory->getVersion(),
+                            'tmpl'       => $tmpl,
+                            'majors'     => $majors,
+                            'minors'     => $minors,
+                            'appRoot'    => $this->container->getParameter('kernel.root_dir'),
+                            'configFile' => $this->factory->getLocalConfigFile()
+                        ),
+                        'returnUrl'         => $this->generateUrl('mautic_installer_step', array('index' => $index)),
+                        'contentTemplate'   => $step->getTemplate(),
+                        'flashes'           => $flashes,
+                        'forwardController' => false
+                    ));
                 }
             }
         } else {
             //redirect back to last step if the user advanced ahead via the URL
-            $last = (int) end($completedSteps) + 1;
+            $last = (int)end($completedSteps) + 1;
             if ($index > $last) {
-                return $this->redirect($this->generateUrl('mautic_installer_step', array('index' => (int) $last)));
+                return $this->redirect($this->generateUrl('mautic_installer_step', array('index' => (int)$last)));
             }
-
         }
 
         return $this->delegateView(array(
             'viewParameters'  => array(
-                'form'    => $form->createView(),
-                'index'   => $index,
-                'count'   => $configurator->getStepCount(),
-                'version' => $this->factory->getVersion(),
-                'tmpl'    => $tmpl,
-                'majors'  => $majors,
-                'minors'  => $minors,
-                'appRoot' => $this->container->getParameter('kernel.root_dir'),
-                'configFile' => $this->factory->getLocalConfigFile(),
+                'form'           => $form->createView(),
+                'index'          => $index,
+                'count'          => $configurator->getStepCount(),
+                'version'        => $this->factory->getVersion(),
+                'tmpl'           => $tmpl,
+                'majors'         => $majors,
+                'minors'         => $minors,
+                'appRoot'        => $this->container->getParameter('kernel.root_dir'),
+                'configFile'     => $this->factory->getLocalConfigFile(),
                 'completedSteps' => $completedSteps
             ),
             'contentTemplate' => $step->getTemplate(),
@@ -283,10 +353,32 @@ class InstallController extends CommonController
      */
     public function finalAction ()
     {
+        $session = $this->factory->getSession();
+
         // We're going to assume a bit here; if the config file exists already and DB info is provided, assume the app is installed and redirect
         if ($this->checkIfInstalled()) {
-            return $this->redirect($this->generateUrl('mautic_dashboard_index'));
+            if (!$session->has('mautic.installer.completedsteps')) {
+                // Arrived here by directly browsing to URL so redirect to the dashboard
+
+                return $this->redirect($this->generateUrl('mautic_dashboard_index'));
+            }
+        } else {
+            // Shouldn't have made it to this step without having a successful install
+            return $this->redirect($this->generateUrl('mautic_installer_home'));
         }
+
+        // Remove installer session variables
+        $session->remove('mautic.installer.completedsteps');
+        $session->remove('mautic.installer.user');
+
+        // Add database migrations up to this point since this is a fresh install (must be done at this point
+        // after the cache has been rebuilt
+        $input  = new ArgvInput(array('console', 'doctrine:migrations:version', '--add', '--all', '--no-interaction'));
+        $output = new BufferedOutput();
+
+        $application = new Application($this->factory->getKernel());
+        $application->setAutoExit(false);
+        $application->run($input, $output);
 
         /** @var \Mautic\InstallBundle\Configurator\Configurator $configurator */
         $configurator = $this->container->get('mautic.configurator');
@@ -322,25 +414,22 @@ class InstallController extends CommonController
     {
         // If the config file doesn't even exist, no point in checking further
         $localConfigFile = $this->factory->getLocalConfigFile();
-        if (file_exists($localConfigFile)) {
-            /** @var \Mautic\InstallBundle\Configurator\Configurator $configurator */
-            $configurator = $this->container->get('mautic.configurator');
-            $params       = $configurator->getParameters();
-
-            // Check the DB Driver, Name, User, and send stats param
-            if ((isset($params['db_driver']) && $params['db_driver'])
-                && (isset($params['db_user']) && $params['db_user'])
-                && (isset($params['db_name']) && $params['db_name'])
-                && (isset($params['send_server_stats']) && $params['send_server_stats'])
-            ) {
-                // We need to allow users to the final step, so one last check here
-                if (strpos($this->request->getRequestUri(), 'installer/final') === false) {
-                    return true;
-                }
-            }
+        if (!file_exists($localConfigFile)) {
+            return false;
         }
 
-        return false;
+        /** @var \Mautic\InstallBundle\Configurator\Configurator $configurator */
+        $configurator = $this->container->get('mautic.configurator');
+        $params       = $configurator->getParameters();
+
+        // if db_driver and mailer_from_name are present then it is assumed all the steps of the installation have been
+        // performed; manually deleting these values or deleting the config file will be required to re-enter
+        // installation.
+        if (empty($params['db_driver']) || empty($params['mailer_from_name'])) {
+            return false;
+        }
+
+        return true;
     }
 
     /**
@@ -352,8 +441,9 @@ class InstallController extends CommonController
      */
     private function performDatabaseInstallation ($dbParams)
     {
-        $dbName             = $dbParams['dbname'];
-        $dbParams['dbname'] = null;
+        $dbName              = $dbParams['dbname'];
+        $dbParams['dbname']  = null;
+        $dbParams['charset'] = 'UTF8';
 
         //suppress display of errors as we know its going to happen while testing the connection
         ini_set('display_errors', 0);
@@ -366,8 +456,8 @@ class InstallController extends CommonController
             $db->close();
 
             return array(
-                'type' => 'error',
-                'msg'  => 'mautic.installer.error.connecting.database',
+                'type'    => 'error',
+                'msg'     => 'mautic.installer.error.connecting.database',
                 'msgVars' => array(
                     '%exception%' => $exception->getMessage()
                 )
@@ -434,80 +524,221 @@ class InstallController extends CommonController
             );
         }
 
+        $sql          = array();
+        $platform     = $schemaManager->getDatabasePlatform();
+        $backupPrefix = (!empty($dbParams['backup_prefix'])) ? $dbParams['backup_prefix'] : 'bak_';
+
+        // Generate install schema
+        $entityManager = $this->getEntityManager($dbParams);
+        $metadatas     = $entityManager->getMetadataFactory()->getAllMetadata();
+        $schemaTool    = new SchemaTool($entityManager);
+        $installSchema = $schemaTool->getSchemaFromMetadata($metadatas);
+        $mauticTables  = $applicableSequences = array();
+
+        foreach ($installSchema->getTables() as $m) {
+            $tableName                = $m->getName();
+            $mauticTables[$tableName] = $this->generateBackupName($dbParams['table_prefix'], $backupPrefix, $tableName);;
+        }
+
+        //backup sequences for databases that support
+        try {
+            $allSequences = $schemaManager->listSequences();
+        } catch (\Exception $e) {
+            $allSequences = array();
+        }
+
+        // Collect list of sequences
+        /** @var \Doctrine\DBAL\Schema\Sequence $sequence */
+        foreach ($allSequences as $sequence) {
+            $name      = $sequence->getName();
+            $tableName = str_replace('_id_seq', '', $name);
+            if (isset($mauticTables[$tableName]) || in_array($tableName, $mauticTables)) {
+                $applicableSequences[$tableName] = $sequence;
+            }
+        }
+        unset($allSequences);
+
         if ($dbParams['backup_tables']) {
             //backup existing tables
-            $backupPrefix     = ($dbParams['backup_prefix']) ? $dbParams['backup_prefix'] : 'bak_';
-            $backupRestraints = $dropTables = $backupTables = array();
+            $backupRestraints = $backupSequences = $backupIndexes = $backupTables = $dropSequences = $dropTables = array();
 
             //cycle through the first time to drop all the foreign keys
             foreach ($tables as $t) {
-                $backup = str_replace($dbParams['table_prefix'], $backupPrefix, $t);
+                if (!isset($mauticTables[$t]) && !in_array($t, $mauticTables)) {
+                    // Not an applicable table
+                    continue;
+                }
 
                 $restraints = $schemaManager->listTableForeignKeys($t);
 
-                if ($t != $backup) {
+                if (isset($mauticTables[$t])) {
                     //to be backed up
-                    $backupRestraints[$backup] = $restraints;
-                    $backupTables[$t]          = $backup;
+                    $backupRestraints[$mauticTables[$t]] = $restraints;
+                    $backupTables[$t]          = $mauticTables[$t];
+                    $backupIndexes[$t]         = $schemaManager->listTableIndexes($t);
+
+                    if (isset($applicableSequences[$t])) {
+                        //backup the sequence
+                        $backupSequences[$t] = $applicableSequences[$t];
+                    }
                 } else {
                     //existing backup to be dropped
                     $dropTables[] = $t;
+
+                    if (isset($applicableSequences[$t])) {
+                        //drop the sequence
+                        $dropSequences[$t] = $applicableSequences[$t];
+                    }
                 }
 
                 foreach ($restraints as $restraint) {
-                    $schemaManager->dropForeignKey($restraint, $t);
+                    $sql[] = $platform->getDropForeignKeySQL($restraint, $t);
                 }
             }
 
             //now drop all the backup tables
             foreach ($dropTables as $t) {
-                $schemaManager->dropTable($t);
+                $sql[] = $platform->getDropTableSQL($t);
+
+                if (isset($dropSequences[$t])) {
+                    $sql[] = $platform->getDropSequenceSQL($dropSequences[$t]);
+                }
             }
 
             //now backup tables
             foreach ($backupTables as $t => $backup) {
-                $schemaManager->renameTable($t, $backup);
+                //drop old sequences
+                if (isset($backupSequences[$t])) {
+                    $oldSequence = $backupSequences[$t];
+                    $name        = $oldSequence->getName();
+                    $newName     = $this->generateBackupName($dbParams['table_prefix'], $backupPrefix, $name);
+                    $newSequence = new Sequence(
+                        $newName,
+                        $oldSequence->getAllocationSize(),
+                        $oldSequence->getInitialValue()
+                    );
+
+                    $sql[] = $platform->getDropSequenceSQL($oldSequence);
+                }
+
+                //drop old indexes
+                /** @var \Doctrine\DBAL\Schema\Index $oldIndex */
+                foreach ($backupIndexes[$t] as $indexName => $oldIndex) {
+                    if ($indexName == 'primary') {
+                        continue;
+                    }
+
+                    $oldName = $oldIndex->getName();
+                    $newName = $this->generateBackupName($dbParams['table_prefix'], $backupPrefix, $oldName);
+
+                    $newIndex = new Index(
+                        $newName,
+                        $oldIndex->getColumns(),
+                        $oldIndex->isUnique(),
+                        $oldIndex->isPrimary(),
+                        $oldIndex->getFlags()
+                    );
+
+                    // Handle postgres primary key constraint
+                    if (strpos($oldName, '_pkey') !== false) {
+                        $newConstraint = $newIndex;
+                        $sql[] = $platform->getDropConstraintSQL($oldName, $t);
+                    } else {
+                        $newIndexes[] = $newIndex;
+                        $sql[]        = $platform->getDropIndexSQL($oldIndex, $t);
+                    }
+                }
+
+                //rename table
+                $tableDiff = new TableDiff($t);
+                $tableDiff->newName = $backup;
+                $queries = $platform->getAlterTableSQL($tableDiff);
+                $sql     = array_merge($sql, $queries);
+
+                //create new index
+                if (!empty($newIndexes)) {
+                    foreach ($newIndexes as $newIndex) {
+                        $sql[] = $platform->getCreateIndexSQL($newIndex, $backup);
+                    }
+                    unset($newIndexes);
+                }
+
+                //create new sequence
+                if (!empty($newSequence)) {
+                    $sql[] = $platform->getCreateSequenceSQL($newSequence);
+                    unset($newSequence);
+                }
+
+                //create new constraint
+                if (!empty($newConstraint)) {
+                    $sql[] = $platform->getCreateConstraintSQL($newConstraint, $backup);
+                }
             }
 
             //apply foreign keys to backup tables
             foreach ($backupRestraints as $table => $oldRestraints) {
                 foreach ($oldRestraints as $or) {
                     $foreignTable     = $or->getForeignTableName();
-                    $foreignTableName = str_replace($dbParams['table_prefix'], $backupPrefix, $foreignTable);
-                    $r                = new \Doctrine\DBAL\Schema\ForeignKeyConstraint(
+                    $foreignTableName = $this->generateBackupName($dbParams['table_prefix'], $backupPrefix, $foreignTable);
+                    $r                = new ForeignKeyConstraint(
                         $or->getLocalColumns(),
                         $foreignTableName,
                         $or->getForeignColumns(),
-                        'BAK_' . $or->getName(),
+                        $backupPrefix . $or->getName(),
                         $or->getOptions()
                     );
-                    $schemaManager->createForeignKey($r, $table);
+                    $sql[] = $platform->getCreateForeignKeySQL($r, $table);
                 }
             }
         } else {
+
+            //drop and create new sequences
+            /** @var \Doctrine\DBAL\Schema\Sequence $sequence */
+            foreach ($applicableSequences as $sequence) {
+                $sql[] = $platform->getDropSequenceSQL($sequence);
+            }
+
             //drop tables
             foreach ($tables as $t) {
-                //drop foreign keys first in order to be able to drop the table
-                $restraints = $schemaManager->listTableForeignKeys($t);
-                foreach ($restraints as $restraint) {
-                    $schemaManager->dropForeignKey($restraint, $t);
+                if (isset($mauticTables[$t])) {
+                    //drop foreign keys first in order to be able to drop the tables
+                    $restraints = $schemaManager->listTableForeignKeys($t);
+                    foreach ($restraints as $restraint) {
+                        $sql[] = $platform->getDropForeignKeySQL($restraint, $t);
+                    }
                 }
             }
             foreach ($tables as $t) {
-                $schemaManager->dropTable($t);
+                if (isset($mauticTables[$t])) {
+                    $sql[] = $platform->getDropTableSQL($t);
+                }
             }
         }
 
-        $entityManager = $this->getEntityManager($dbParams);
-        $metadatas     = $entityManager->getMetadataFactory()->getAllMetadata();
+        if (!empty($sql)) {
+            foreach ($sql as $q) {
+                try {
+                    $db->query($q);
+                } catch (\Exception $e) {
+                    $db->close();
+
+                    return array(
+                        'type'    => 'error',
+                        'msg'     => 'mautic.installer.error.installing.data',
+                        'msgVars' => array(
+                            '%exception%' => $e->getMessage()
+                        )
+                    );
+                }
+            }
+        }
 
         if (!empty($metadatas)) {
-            $schemaTool = new SchemaTool($entityManager);
-            $queries    = $schemaTool->getCreateSchemaSql($metadatas);
+            $queries = $installSchema->toSql($platform);
 
             foreach ($queries as $q) {
                 try {
-                    $db->executeQuery($q);
+                    $db->query($q);
                 } catch (\Exception $e) {
                     $db->close();
 
@@ -534,9 +765,25 @@ class InstallController extends CommonController
     }
 
     /**
-     * Installs data fixtures for the application
+     * @param $prefix
+     * @param $backupPrefix
+     * @param $name
      *
-     * @param array $dbParams
+     * @return mixed|string
+     */
+    private function generateBackupName($prefix, $backupPrefix, $name)
+    {
+        if (empty($prefix) || strpos($name, $prefix) === false) {
+
+            return $backupPrefix . $name;
+        } else {
+
+            return str_replace($prefix, $backupPrefix, $name);
+        }
+    }
+
+    /**
+     * Installs data fixtures for the application
      *
      * @return array|bool Array containing the flash message data on a failure, boolean true on success
      */
@@ -580,17 +827,23 @@ class InstallController extends CommonController
      * Creates the admin user
      *
      * @param \Symfony\Component\Form\Form $form
+     * @param User                         $existingUser
      *
      * @return array|bool Array containing the flash message data on a failure, boolean true on success
      */
-    private function performUserAddition ($form)
+    private function performUserAddition ($form, User $existingUser = null)
     {
         try {
             $entityManager = $this->getEntityManager();
 
             // Now we create the user
             $data = $form->getData();
-            $user = new User();
+
+            if ($existingUser != null) {
+                $user = $existingUser;
+            } else {
+                $user = new User();
+            }
 
             /** @var \Symfony\Component\Security\Core\Encoder\PasswordEncoderInterface $encoder */
             $encoder = $this->container->get('security.encoder_factory')->getEncoder($user);
@@ -632,37 +885,46 @@ class InstallController extends CommonController
         if (empty($entityManager)) {
             if (empty($dbParams)) {
                 $configurator = $this->container->get('mautic.configurator');
-                $dbStep       = new DoctrineStep($configurator->getParameters());
-                $dbParams     = (array)$dbStep;
+                $dbStep       = new DoctrineStep($configurator);
+                $dbParams     = (array) $dbStep;
 
                 $dbParams['dbname'] = $dbParams['name'];
                 unset($dbParams['name']);
+
+                // Support for env variables
+                foreach ($dbParams as $k => &$v) {
+                    if (!empty($v) && is_string($v) && preg_match('/getenv\((.*?)\)/', $v, $match)) {
+                        $v = (string) getenv($match[1]);
+                    }
+                }
             }
+
+            // Ensure UTF8 charset
+            $dbParams['charset'] = 'UTF8';
 
             $paths = $namespaces = array();
 
-            //build entity namespaces
-            $bundles = $this->factory->getParameter('bundles');
+            // Build entity namespaces
+            $bundles = $this->factory->getMauticBundles(true);
             foreach ($bundles as $b) {
                 $entityPath = $b['directory'] . '/Entity';
                 if (file_exists($entityPath)) {
                     $paths[] = $entityPath;
-                    $namespaces['Mautic' . $b['bundle']] = $b['namespace'] . '\Entity';
+                    if ($b['isPlugin']) {
+                        $namespaces[$b['bundle']] = $b['namespace'] . '\Entity';
+                    } else {
+                        $namespaces['Mautic' . $b['bundle']] = $b['namespace'] . '\Entity';
+                    }
                 }
             }
 
-            $addons = $this->factory->getParameter('addon.bundles');
-            foreach ($addons as $b) {
-                $entityPath = $b['directory'] . '/Entity';
-                if (file_exists($entityPath)) {
-                    $paths[] = $entityPath;
-                    $namespaces[$b['bundle']] = $b['namespace'] . '\Entity';
-                }
-            }
-            $config  = Setup::createAnnotationMetadataConfiguration($paths, true, null, null, false);
-            foreach ($namespaces as $alias => $namespace) {
-                $config->addEntityNamespace($alias, $namespace);
-            }
+            $driver = new StaticPHPDriver($paths);
+            $config = Setup::createConfiguration($this->factory->getEnvironment(), null, new ArrayCache());
+            $config->setMetadataDriverImpl(
+                $driver
+            );
+
+            $config->setEntityNamespaces($namespaces);
 
             //set the table prefix
             define('MAUTIC_TABLE_PREFIX', $dbParams['table_prefix']);

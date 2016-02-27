@@ -30,18 +30,9 @@ class TriggerRepository extends CommonRepository
             ->from('MauticPointBundle:Trigger', $this->getTableAlias())
             ->leftJoin($this->getTableAlias().'.category', 'cat');
 
-        $this->buildClauses($q, $args);
+        $args['qb'] = $q;
 
-        $query = $q->getQuery();
-
-        if (isset($args['hydration_mode'])) {
-            $mode = strtoupper($args['hydration_mode']);
-            $query->setHydrationMode(constant("\\Doctrine\\ORM\\Query::$mode"));
-        }
-
-        $results = new Paginator($query);
-
-        return $results;
+        return parent::getEntities($args);
     }
 
     /**
@@ -51,26 +42,11 @@ class TriggerRepository extends CommonRepository
      */
     public function getTriggerColors()
     {
-        $now = new \DateTime();
-
         $q = $this->_em->createQueryBuilder()
             ->select('partial t.{id, color, points}')
             ->from('MauticPointBundle:Trigger', 't', 't.id');
 
-        $q->where(
-            $q->expr()->andX(
-                $q->expr()->eq('t.isPublished', true),
-                $q->expr()->orX(
-                    $q->expr()->isNull('t.publishUp'),
-                    $q->expr()->gte('t.publishUp', ':now')
-                ),
-                $q->expr()->orX(
-                    $q->expr()->isNull('t.publishDown'),
-                    $q->expr()->lte('t.publishDown', ':now')
-                )
-            )
-        )
-            ->setParameter('now', $now);
+        $q->where($this->getPublishedByDateExpression($q));
 
         $q->orderBy('t.points', 'ASC');
 

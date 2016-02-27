@@ -9,7 +9,9 @@
 
 namespace Mautic\InstallBundle\Configurator\Step;
 
+use Mautic\CoreBundle\Configurator\Configurator;
 use Mautic\InstallBundle\Configurator\Form\CheckStepType;
+use Symfony\Component\HttpFoundation\RequestStack;
 
 /**
  * Check Step.
@@ -53,16 +55,26 @@ class CheckStep implements StepInterface
     public $site_url;
 
     /**
+     * Set the name of the source that installed Mautic
+     *
+     * @var string
+     */
+    public $install_source = 'Mautic';
+
+    /**
      * Constructor
      *
-     * @param boolean $configIsWritable Flag if the configuration file is writable
-     * @param string  $kernelRoot       Kernel root path
+     * @param Configurator $configurator Configurator service
+     * @param string       $kernelRoot   Kernel root path
+     * @param RequestStack $requestStack Request stack
      */
-    public function __construct($configIsWritable, $kernelRoot, $baseUrl)
+    public function __construct(Configurator $configurator, $kernelRoot, RequestStack $requestStack)
     {
-        $this->configIsWritable = $configIsWritable;
+        $request = $requestStack->getCurrentRequest();
+
+        $this->configIsWritable = $configurator->isFileWritable();
         $this->kernelRoot       = $kernelRoot;
-        $this->site_url         = $baseUrl;
+        $this->site_url         = $request->getSchemeAndHttpHost().$request->getBasePath();
     }
 
     /**
@@ -79,10 +91,6 @@ class CheckStep implements StepInterface
     public function checkRequirements()
     {
         $messages = array();
-
-        if (version_compare(PHP_VERSION, '5.3.7', '<')) {
-            $messages[] = 'mautic.install.minimum.php.version';
-        }
 
         if (version_compare(PHP_VERSION, '5.3.16', '==')) {
             $messages[] = 'mautic.install.buggy.php.version';
@@ -104,21 +112,16 @@ class CheckStep implements StepInterface
             $messages[] = 'mautic.install.logs.unwritable';
         }
 
-        if (!ini_get('date.timezone')) {
-            $messages[] = 'mautic.install.date.timezone';
+        $timezones = array();
+
+        foreach (\DateTimeZone::listAbbreviations() as $abbreviations) {
+            foreach ($abbreviations as $abbreviation) {
+                $timezones[$abbreviation['timezone_id']] = true;
+            }
         }
 
-        if (version_compare(PHP_VERSION, '5.3.7', '>=')) {
-            $timezones = array();
-            foreach (\DateTimeZone::listAbbreviations() as $abbreviations) {
-                foreach ($abbreviations as $abbreviation) {
-                    $timezones[$abbreviation['timezone_id']] = true;
-                }
-            }
-
-            if (!isset($timezones[date_default_timezone_get()])) {
-                $messages[] = 'mautic.install.timezone.not.supported';
-            }
+        if (!isset($timezones[date_default_timezone_get()])) {
+            $messages[] = 'mautic.install.timezone.not.supported';
         }
 
         if (get_magic_quotes_gpc()) {
@@ -143,6 +146,14 @@ class CheckStep implements StepInterface
 
         if (!function_exists('simplexml_import_dom')) {
             $messages[] = 'mautic.install.function.simplexml';
+        }
+
+        if (!extension_loaded('mcrypt')) {
+            $messages[] = 'mautic.install.extension.mcrypt';
+        }
+
+        if (!function_exists('finfo_open')) {
+            $messages[] = 'mautic.install.extension.fileinfo';
         }
 
         if (function_exists('apc_store') && ini_get('apc.enabled')) {
@@ -192,7 +203,47 @@ class CheckStep implements StepInterface
      */
     public function checkOptionalSettings()
     {
+        $phpSupportData = array(
+            '5.3' => array(
+                'security' => '2013-07-11',
+                'eos'      => '2014-08-14',
+            ),
+            '5.4' => array(
+                'security' => '2014-09-14',
+                'eos'      => '2015-09-14',
+            ),
+            '5.5' => array(
+                'security' => '2015-07-10',
+                'eos'      => '2016-07-10'
+            ),
+            '5.6' => array(
+                'security' => '2016-08-28',
+                'eos'      => '2017-08-28'
+            ),
+        );
+
         $messages = array();
+
+        // Check the PHP version's support status
+        $activePhpVersion = PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;
+
+        // Do we have the PHP version's data?
+        if (isset($phpSupportData[$activePhpVersion])) {
+            // First check if the version has reached end of support
+            $today = new \DateTime();
+            $phpEndOfSupport = new \DateTime($phpSupportData[$activePhpVersion]['eos']);
+
+            if ($phpNotSupported = $today > $phpEndOfSupport) {
+                $messages[] = 'mautic.install.php.version.not.supported';
+            }
+
+            // If the version is still supported, check if it has reached security support only
+            $phpSecurityOnlyDate = new \DateTime($phpSupportData[$activePhpVersion]['security']);
+
+            if (!$phpNotSupported && $today > $phpSecurityOnlyDate) {
+                $messages[] = 'mautic.install.php.version.has.only.security.support';
+            }
+        }
 
         if (version_compare(PHP_VERSION, '5.3.8', '<')) {
             $messages[] = 'mautic.install.php.version.annotations';
@@ -222,6 +273,15 @@ class CheckStep implements StepInterface
             }
         }
 
+        if (!extension_loaded('zip')) {
+            $messages[] = 'mautic.install.extension.zip';
+        }
+
+        // We set a default timezone in the app bootstrap, but advise the user if their PHP config is missing it
+        if (!ini_get('date.timezone')) {
+            $messages[] = 'mautic.install.date.timezone.not.set';
+        }
+
         if (!class_exists('\\DomDocument')) {
             $messages[] = 'mautic.install.module.phpxml';
         }
@@ -238,10 +298,21 @@ class CheckStep implements StepInterface
             $messages[] = 'mautic.install.function.xml';
         }
 
+        if (!function_exists('imap_open')) {
+            $messages[] = 'mautic.install.extension.imap';
+        }
+
         if (!defined('PHP_WINDOWS_VERSION_BUILD')) {
             if (!function_exists('posix_isatty')) {
                 $messages[] = 'mautic.install.function.posix';
             }
+        }
+
+        $memoryLimit = $this->toBytes(ini_get('memory_limit'));
+        $suggestedLimit = 128 * 1024 * 1024;
+
+        if ($memoryLimit < $suggestedLimit) {
+            $messages[] = 'mautic.install.memory.limit';
         }
 
         if (!class_exists('\\Locale')) {
@@ -326,5 +397,33 @@ class CheckStep implements StepInterface
         }
 
         return $parameters;
+    }
+
+    /**
+     * Takes the memory limit string form php.ini and returns numeric value in bytes.
+     *
+     * @param string $val
+     *
+     * @return integer
+     */
+    public function toBytes($val) {
+        $val = trim($val);
+
+        if ($val == -1) {
+            return PHP_INT_MAX;
+        }
+
+        $last = strtolower($val[strlen($val)-1]);
+        switch($last) {
+            // The 'G' modifier is available since PHP 5.1.0
+            case 'g':
+                $val *= 1024;
+            case 'm':
+                $val *= 1024;
+            case 'k':
+                $val *= 1024;
+        }
+
+        return $val;
     }
 }

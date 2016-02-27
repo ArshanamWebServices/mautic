@@ -15,19 +15,18 @@ $view->extend('MauticPointBundle:Trigger:index.html.php');
     <table class="table table-hover table-striped table-bordered pointtrigger-list" id="triggerTable">
         <thead>
         <tr>
-            <th class="col-pointtrigger-actions pl-20">
-                <div class="checkbox-inline custom-primary">
-                    <label class="mb-0 pl-10">
-                        <input type="checkbox" id="customcheckbox-one0" value="1" data-toggle="checkall" data-target="#triggerTable">
-                        <span></span>
-                    </label>
-                </div>
-            </th>
             <?php
+            echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
+                'checkall' => 'true',
+                'target'   => '#triggerTable'
+            ));
+
+            echo "<th class='col-pointtrigger-color'></th>";
+
             echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                 'sessionVar' => 'pointtrigger',
                 'orderBy'    => 't.name',
-                'text'       => 'mautic.point.trigger.thead.name',
+                'text'       => 'mautic.core.name',
                 'class'      => 'col-pointtrigger-name',
                 'default'    => true
             ));
@@ -35,8 +34,8 @@ $view->extend('MauticPointBundle:Trigger:index.html.php');
             echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                 'sessionVar' => 'pointtrigger',
                 'orderBy'    => 'c.title',
-                'text'       => 'mautic.point.trigger.thead.category',
-                'class'      => 'col-pointtrigger-category'
+                'text'       => 'mautic.core.category',
+                'class'      => 'col-pointtrigger-category visible-md visible-lg'
             ));
 
             echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
@@ -46,13 +45,11 @@ $view->extend('MauticPointBundle:Trigger:index.html.php');
                 'class'      => 'col-pointtrigger-points'
             ));
 
-            echo "<th class='col-pointtrigger-color'>" . $view['translator']->trans('mautic.point.trigger.thead.color') . '</th>';
-
             echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                 'sessionVar' => 'pointtrigger',
                 'orderBy'    => 't.id',
-                'text'       => 'mautic.point.trigger.thead.id',
-                'class'      => 'col-pointtrigger-id'
+                'text'       => 'mautic.core.id',
+                'class'      => 'col-pointtrigger-id visible-md visible-lg'
             ));
             ?>
         </tr>
@@ -75,11 +72,11 @@ $view->extend('MauticPointBundle:Trigger:index.html.php');
                     ?>
                 </td>
                 <td>
+                    <span class="label label-default pa-10" style="background: #<?php echo $item->getColor(); ?>;"> </span>
+                </td>
+                <td>
                     <div>
-                        <?php echo $view->render('MauticCoreBundle:Helper:publishstatus_icon.html.php',array(
-                            'item'       => $item,
-                            'model'      => 'point.trigger'
-                        )); ?>
+                        <?php echo $view->render('MauticCoreBundle:Helper:publishstatus_icon.html.php',array('item' => $item, 'model' => 'point.trigger')); ?>
                         <?php if ($permissions['point:triggers:edit']): ?>
                         <a href="<?php echo $view['router']->generate('mautic_pointtrigger_action', array("objectAction" => "edit", "objectId" => $item->getId())); ?>" data-toggle="ajax">
                             <?php echo $item->getName(); ?>
@@ -96,15 +93,9 @@ $view->extend('MauticPointBundle:Trigger:index.html.php');
                     <?php $category = $item->getCategory(); ?>
                     <?php $catName  = ($category) ? $category->getTitle() : $view['translator']->trans('mautic.core.form.uncategorized'); ?>
                     <?php $color    = ($category) ? '#' . $category->getColor() : 'inherit'; ?>
-                    <span class="label label-default pa-5" style="background: <?php echo $color; ?>;"> </span>
-                    <span><?php echo $catName; ?></span>
+                    <span style="white-space: nowrap;"><span class="label label-default pa-4" style="border: 1px solid #d5d5d5; background: <?php echo $color; ?>;"> </span> <span><?php echo $catName; ?></span></span>
                 </td>
-                <td class="visible-md visible-lg"><?php echo $item->getPoints(); ?></td>
-                <?php
-                $color = $item->getColor();
-                $colorStyle = ($color) ? ' style="background-color: ' . $color . '"' : '';
-                ?>
-                <td<?php echo $colorStyle; ?> class="visible-md visible-lg"></td>
+                <td><?php echo $item->getPoints(); ?></td>
                 <td class="visible-md visible-lg"><?php echo $item->getId(); ?></td>
             </tr>
         <?php endforeach; ?>

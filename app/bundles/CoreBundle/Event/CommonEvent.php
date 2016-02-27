@@ -28,9 +28,14 @@ class CommonEvent extends Event
     protected $entity;
 
     /**
-     * @var boolean
+     * @var bool
      */
     protected $isNew = true;
+
+    /**
+     * @var bool|array
+     */
+    protected $changes;
 
     /**
      * Sets the entity manager for the event to use
@@ -59,6 +64,17 @@ class CommonEvent extends Event
      */
     public function getChanges()
     {
-        return ($this->entity && method_exists($this->entity, 'getChanges')) ? $this->entity->getChanges() : false;
+        if (null === $this->changes) {
+            $this->changes = false;
+            if ($this->entity && method_exists($this->entity, 'getChanges')) {
+                $this->changes = $this->entity->getChanges();
+                // Reset changes
+                if (method_exists($this->entity, 'resetChanges')) {
+                    $this->entity->resetChanges();
+                }
+            }
+        }
+
+        return $this->changes;
     }
 }

@@ -9,11 +9,6 @@
 
 namespace Mautic\InstallBundle;
 
-use Mautic\InstallBundle\Configurator\Step\CheckStep;
-use Mautic\InstallBundle\Configurator\Step\DoctrineStep;
-use Mautic\InstallBundle\Configurator\Step\EmailStep;
-use Mautic\InstallBundle\Configurator\Step\MiscStep;
-use Mautic\InstallBundle\Configurator\Step\UserStep;
 use Symfony\Component\HttpKernel\Bundle\Bundle;
 
 /**
@@ -23,24 +18,4 @@ use Symfony\Component\HttpKernel\Bundle\Bundle;
  */
 class MauticInstallBundle extends Bundle
 {
-    /**
-     * {@inheritdoc}
-     */
-    public function boot()
-    {
-        /** @var \Mautic\InstallBundle\Configurator\Configurator $configurator */
-        $configurator = $this->container->get('mautic.configurator');
-
-        $request = $this->container->get('mautic.factory')->getRequest();
-
-        // Steps should be added here in the order they'll be displayed
-        $configurator->addStep(new CheckStep($configurator->isFileWritable(), $this->container->getParameter('kernel.root_dir'), $request->getSchemeAndHttpHost().$request->getBasePath()));
-        $configurator->addStep(new DoctrineStep($configurator->getParameters()));
-        $configurator->addStep(new UserStep());
-        $configurator->addStep(new EmailStep());
-
-        /*
-        $configurator->addStep(new MiscStep($request->getSchemeAndHttpHost().$request->getBasePath()));
-        */
-    }
 }

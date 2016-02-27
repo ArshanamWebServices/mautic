@@ -7,7 +7,6 @@
  * @license     GNU/GPLv3 http://www.gnu.org/licenses/gpl-3.0.html
  */
 
-$activePanelClasses  = ($app->getSession()->get('left-panel', 'default') == 'unpinned') ? ' hide-left' : "";
 ?>
 <!DOCTYPE html>
 <html>
@@ -42,6 +41,7 @@ $activePanelClasses  = ($app->getSession()->get('left-panel', 'default') == 'unp
                 <div class="container-fluid">
                     <div class="row">
                         <div class="col-xs-6 text-muted"><?php echo $view['translator']->trans('mautic.core.copyright', array('%date%' => date('Y'))); ?></div>
+                        <div class="col-xs-6 text-muted text-right small">v<?php echo $view['formatter']->getVersion(); ?></div>
                     </div>
                 </div>
             </footer>
@@ -64,20 +64,18 @@ $activePanelClasses  = ($app->getSession()->get('left-panel', 'default') == 'unp
                     if (mQuery('[class*="sf-tool"]').length) {
                         mQuery('[class*="sf-tool"]').remove();
                     }
-                    if (mQuery('[id*="sfTool"]').length) {
-                        mQuery('[id*="sfTool"]').remove();
-                    }
-                    if (mQuery('[id*="sfMini"]').length) {
-                        mQuery('[id*="sfMini"]').remove();
-                    }
+
                     mQuery.get(mauticBaseUrl + '_wdt/'+XMLHttpRequest.getResponseHeader('x-debug-token'),function(data){
-                        mQuery('body').append(data);
+                        mQuery('body').append('<div class="sf-toolbar-reload">'+data+'</div>');
                     });
                 }
             });
             <?php endif; ?>
         </script>
         <?php $view['assets']->outputScripts("bodyClose"); ?>
-        <?php echo $view->render('MauticCoreBundle:Helper:modal.html.php', array('id' => 'MauticSharedModal')); ?>
+        <?php echo $view->render('MauticCoreBundle:Helper:modal.html.php', array(
+            'id'            => 'MauticSharedModal',
+            'footerButtons' => true
+        )); ?>
     </body>
 </html>

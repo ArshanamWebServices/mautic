@@ -16,25 +16,29 @@ endif;
     <table class="table table-hover table-striped table-bordered role-list" id="roleTable">
         <thead>
         <tr>
-            <th class="col-role-actions"></th>
             <?php
+            echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
+                'checkall' => 'true',
+                'target'   => '#roleTable'
+            ));
+
             echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                 'sessionVar' => 'role',
                 'orderBy'    => 'r.name',
-                'text'       => 'mautic.user.role.thead.name',
+                'text'       => 'mautic.core.name',
                 'class'      => 'col-role-name',
                 'default'    => true
             ));
             echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                 'sessionVar' => 'role',
                 'orderBy'    => 'r.description',
-                'text'       => 'mautic.user.role.thead.description',
+                'text'       => 'mautic.core.description',
                 'class'      => 'visible-md visible-lg col-role-desc'
             ));
             echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                 'sessionVar' => 'role',
                 'orderBy'    => 'r.id',
-                'text'       => 'mautic.user.role.thead.id',
+                'text'       => 'mautic.core.id',
                 'class'      => 'visible-md visible-lg col-role-id'
             ));
             ?>
@@ -58,9 +62,7 @@ endif;
                     ?>
                 </td>
                 <td>
-                    <a href="<?php echo $view['router']->generate('mautic_user_index',
-                        array("search" => $view['translator']->trans('mautic.user.user.searchcommand.role') . ':' .  $item->getName())); ?>"
-                       data-toggle="ajax">
+                    <a href="<?php echo $view['router']->generate('mautic_user_index', array("search" => $view['translator']->trans('mautic.user.user.searchcommand.role') . ':' .  $item->getName())); ?>" data-toggle="ajax">
                         <?php echo $item->getName(); ?>
                     </a>
                 </td>

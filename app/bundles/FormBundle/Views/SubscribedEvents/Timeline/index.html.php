@@ -36,24 +36,24 @@ if ($page->getId()) {
 	        	<dl class="dl-horizontal">
         		<?php if (isset($link)) : ?>
 					<dt><?php echo $view['translator']->trans('mautic.core.source'); ?></dt>
-					<dd><?php echo $link; ?></dd>
+					<dd class="ellipsis"><?php echo $link; ?></dd>
 				<?php endif; ?>
 				<?php if ($form->getDescription()) : ?>
 					<dt><?php echo $view['translator']->trans('mautic.core.description'); ?></dt>
-					<dd><?php echo $form->getDescription(); ?></dd>
+					<dd class="ellipsis"><?php echo $form->getDescription(); ?></dd>
 				    <?php if (isset($event['extra'])) : ?>
                         <?php if ($descr = $form->getDescription()): ?>
-	                    <p><?php echo $view['translator']->trans('mautic.form.timeline.event.description', array('%description%' => $descr)); ?></p>
+	                    <p><?php echo $descr; ?></p>
                     <?php endif; ?>
                     <?php endif; ?>
 				<?php endif; ?>
 					<dt><?php echo $view['translator']->trans('mautic.form.result.thead.referrer'); ?></dt>
-					<dd><?php echo $view['assets']->makeLinks($submission->getReferer()); ?></dd>
+					<dd class="ellipsis"><?php echo $view['assets']->makeLinks($submission->getReferer()); ?></dd>
 				<?php if (is_array($results)) : ?>
 					<?php foreach ($form->getFields() as $field) : ?>
-						<?php if (array_key_exists($field->getAlias(), $results)) : ?>
+						<?php if (array_key_exists($field->getAlias(), $results) && $results[$field->getAlias()] != '' && $results[$field->getAlias()] != null && $results[$field->getAlias()] != array()) : ?>
 							<dt><?php echo $field->getLabel(); ?></dt>
-							<dd><?php echo $results[$field->getAlias()]; ?></dd>
+							<dd class="ellipsis"><?php echo $results[$field->getAlias()]; ?></dd>
 						<?php endif; ?>
 					<?php endforeach; ?>
 				<?php endif; ?>

@@ -9,9 +9,11 @@
 
 namespace Mautic\CoreBundle\Model;
 
+use Doctrine\ORM\Mapping\ClassMetadata;
 use Doctrine\ORM\Tools\Pagination\Paginator;
 use Mautic\CoreBundle\Entity\CommonRepository;
 use Mautic\CoreBundle\Factory\MauticFactory;
+use Symfony\Component\Intl\Intl;
 
 /**
  * Class CommonModel
@@ -87,7 +89,13 @@ class CommonModel
      */
     public function getRepository()
     {
-        return false;
+        static $commonRepo;
+
+        if ($commonRepo === null) {
+            $commonRepo = new CommonRepository($this->em, new ClassMetadata('MauticCoreBundle:FormEntity'));
+        }
+
+        return $commonRepo;
     }
 
     /**
@@ -125,6 +133,27 @@ class CommonModel
     }
 
     /**
+     * Get a specific entity
+     *
+     * @param $id
+     *
+     * @return null|object
+     */
+    public function getEntity($id = null)
+    {
+        if (null !== $id) {
+            $repo = $this->getRepository();
+            if (method_exists($repo, 'getEntity')) {
+                return $repo->getEntity($id);
+            }
+
+            return $repo->find($id);
+        }
+
+        return null;
+    }
+
+    /**
      * Encode an array to append to a URL
      *
      * @param $array
@@ -153,20 +182,98 @@ class CommonModel
      * @param array $routeParams
      * @param bool  $absolute
      * @param array $clickthrough
+     *
+     * @return string
      */
     public function buildUrl($route, $routeParams = array(), $absolute = true, $clickthrough = array())
     {
-        if ($absolute && php_sapi_name() == 'cli') {
-            $siteUrl = $this->factory->getParameter('site_url');
-            $baseUrl = $this->factory->getRouter()->generate($route, $routeParams);
-            $url     = $siteUrl . $baseUrl;
-        } else {
-            $url = $this->factory->getRouter()->generate($route, $routeParams, $absolute);
-        }
-
+        $url  = $this->factory->getRouter()->generate($route, $routeParams, $absolute);
         $url .= (!empty($clickthrough)) ? '?ct=' . $this->encodeArrayForUrl($clickthrough) : '';
 
         return $url;
+    }
+
+    /**
+     * Retrieve entity based on id/alias slugs
+     *
+     * @param string $slug
+     *
+     * @return object|bool
+     */
+    public function getEntityBySlugs($slug)
+    {
+        $slugs    = explode('/', $slug);
+        $idSlug   = '';
+        $category = null;
+        $lang     = null;
+
+        $slugCount = count($slugs);
+        $locales   = Intl::getLocaleBundle()->getLocaleNames();
+
+        switch (true) {
+            case ($slugCount === 3):
+                list($lang, $category, $idSlug) = $slugs;
+
+                break;
+
+            case ($slugCount === 2):
+                list($category, $idSlug) = $slugs;
+
+                // Check if the first slug is actually a locale
+                if (isset($locales[$category])) {
+                    $lang     = $category;
+                    $category = null;
+                }
+
+                break;
+
+            case ($slugCount === 1):
+                $idSlug = $slugs[0];
+
+                break;
+        }
+
+        // Check for uncategorized
+        if ($this->translator->trans('mautic.core.url.uncategorized') == $category) {
+            $category = null;
+        }
+
+        if ($lang && !isset($locales[$lang])) {
+            // Language doesn't exist so return false
+
+            return false;
+        }
+
+        if (strpos($idSlug, ':') !== false) {
+            $parts = explode(':', $idSlug);
+            if (count($parts) == 2) {
+                $entity = $this->getEntity($parts[0]);
+
+                if (!empty($entity)) {
+
+                    return $entity;
+                }
+            }
+        } else {
+            $entity = $this->getRepository()->findOneBySlugs($idSlug, $category, $lang);
+
+            if (!empty($entity)) {
+
+                return $entity;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param $alias
+     *
+     * @return null|object
+     */
+    public function getEntityByAlias($alias, $categoryAlias = null, $lang = null)
+    {
+
     }
 
 }

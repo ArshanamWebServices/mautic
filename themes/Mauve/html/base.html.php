@@ -11,9 +11,12 @@
 <html>
     <head>
         <title><?php $view['slots']->output('pageTitle', 'Mautic'); ?></title>
+        <?php if (isset($page)) : ?>
+            <meta name="description" content="<?php echo $page->getMetaDescription(); ?>">
+        <?php endif; ?>
         <script src="//ajax.googleapis.com/ajax/libs/jquery/2.1.1/jquery.min.js"></script>
         <link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/bootstrap/3.2.0/css/bootstrap.min.css" type="text/css" />
-        <link rel="stylesheet" href="../../../themes/Mauve/css/mauve.css" type="text/css" />
+        <link rel="stylesheet" href="<?php echo $view['assets']->getUrl('themes/Mauve/css/mauve.css'); ?>" type="text/css" />
         <script src="//maxcdn.bootstrapcdn.com/bootstrap/3.2.0/js/bootstrap.min.js"></script>
         <link href="//maxcdn.bootstrapcdn.com/font-awesome/4.2.0/css/font-awesome.min.css" rel="stylesheet">
         <?php $view['assets']->outputHeadDeclarations(); ?>

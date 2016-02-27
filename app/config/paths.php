@@ -11,7 +11,9 @@ $paths = array(
     //customizable
     'themes'       => 'themes',
     'assets'       => 'media',
-    'addons'       => 'addons',
+    'asset_prefix' => '',
+    'plugins'       => 'plugins',
+    'translations' => 'translations',
     'local_config' => '%kernel.root_dir%/config/local.php',
 );
 

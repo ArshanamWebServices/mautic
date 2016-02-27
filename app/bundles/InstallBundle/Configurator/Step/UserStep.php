@@ -10,6 +10,7 @@
 namespace Mautic\InstallBundle\Configurator\Step;
 
 use Mautic\InstallBundle\Configurator\Form\UserStepType;
+use Symfony\Component\HttpFoundation\Session\Session;
 use Symfony\Component\Validator\Constraints as Assert;
 
 /**
@@ -19,47 +20,45 @@ class UserStep implements StepInterface
 {
     /**
      * User's first name
-     *
-     * @Assert\NotBlank(message = "mautic.install.notblank")
      */
     public $firstname;
 
     /**
      * User's last name
-     *
-     * @Assert\NotBlank(message = "mautic.install.notblank")
      */
     public $lastname;
 
     /**
      * User's e-mail address
-     *
-     * @Assert\NotBlank(message = "mautic.install.notblank")
-     * @Assert\Email(message = "mautic.install.invalidemail")
      */
     public $email;
 
     /**
      * User's username
-     *
-     * @Assert\NotBlank(message = "mautic.install.notblank")
      */
     public $username;
 
     /**
      * User's password
-     *
-     * @Assert\NotBlank(message = "mautic.install.notblank")
-     * @Assert\Length(min = 6, minMessage = "mautic.install.password.minlength")
      */
     public $password;
+
+    /**
+     * @var Session
+     */
+    private $session;
+
+    public function __construct(Session $session)
+    {
+        $this->session = $session;
+    }
 
     /**
      * {@inheritdoc}
      */
     public function getFormType()
     {
-        return new UserStepType();
+        return new UserStepType($this->session);
     }
 
     /**

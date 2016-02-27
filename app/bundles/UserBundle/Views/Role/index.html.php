@@ -9,7 +9,7 @@
 
 $view->extend('MauticCoreBundle:Default:content.html.php');
 $view['slots']->set('mauticContent', 'role');
-$view['slots']->set('headerTitle', $view['translator']->trans('mautic.user.role.header.index'));
+$view['slots']->set('headerTitle', $view['translator']->trans('mautic.user.roles'));
 
 $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actions.html.php', array(
     'templateButtons' => array(
@@ -20,8 +20,9 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
 )));
 ?>
 
-<?php echo $view->render('MauticCoreBundle:Helper:bulk_actions.html.php', array(
+<?php echo $view->render('MauticCoreBundle:Helper:list_toolbar.html.php', array(
     'searchValue' => $searchValue,
+    'searchHelp'  => 'mautic.user.role.help.searchcommands',
     'action'      => $currentRoute,
     'langVar'     => 'user.role',
     'routeBase'   => 'role',

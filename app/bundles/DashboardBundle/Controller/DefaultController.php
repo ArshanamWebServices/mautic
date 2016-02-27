@@ -27,11 +27,16 @@ class DefaultController extends CommonController
      */
     public function indexAction()
     {
+        /** @var \Mautic\PageBundle\Entity\HitRepository $hitRepo */
         $hitRepo        = $this->factory->getEntityManager()->getRepository('MauticPageBundle:Hit');
+        /** @var \Mautic\EmailBundle\Entity\StatRepository $emailStatRepo */
         $emailStatRepo  = $this->factory->getEntityManager()->getRepository('MauticEmailBundle:Stat');
+        /** @var \Mautic\CoreBundle\Entity\IpAddressRepository $ipAddressRepo */
         $ipAddressRepo  = $this->factory->getEntityManager()->getRepository('MauticCoreBundle:IpAddress');
+        /** @var \Mautic\EmailBundle\Entity\EmailRepository $emailRepo */
+        $emailRepo      = $this->factory->getModel('email')->getRepository();
 
-        $sentReadCount        = $this->factory->getModel('email')->getRepository()->getSentReadCount();
+        $sentReadCount        = $emailRepo->getSentReadCount();
         $clickthroughCount    = $hitRepo->countEmailClickthrough();
         $newReturningVisitors = array(
             'returning' => $hitRepo->countReturningIp(),
@@ -40,23 +45,46 @@ class DefaultController extends CommonController
         $weekVisitors         = $hitRepo->countVisitors(604800);
         $allTimeVisitors      = $hitRepo->countVisitors(0);
         $allSentEmails        = $emailStatRepo->getSentCount();
-        $popularPages         = $this->factory->getModel('page')->getRepository()->getPopularPages();
-        $popularAssets        = $this->factory->getModel('asset')->getRepository()->getPopularAssets();
-        $popularCampaigns     = $this->factory->getModel('campaign')->getRepository()->getPopularCampaigns();
 
-        $openRate = 0;
+        /** @var \Mautic\PageBundle\Model\PageModel $pageModel */
+        $pageModel            = $this->factory->getModel('page');
+        $popularPageEntites   = $pageModel->getRepository()->getPopularPages();
 
-        if ($sentReadCount['sentCount']) {
-            $openRate = round($sentReadCount['readCount'] / $sentReadCount['sentCount'] * 100);
+        $popularPages         = array();
+        foreach ($popularPageEntites as $page) {
+            $popularPages[] = array(
+                'id'      => $page->getId(),
+                'title'   => $page->getTitle(),
+                'hits'    => $page->getHits(),
+                'url'     => $pageModel->generateUrl($page)
+            );
+        }
+
+        $popularAssetEntities = $this->factory->getModel('asset')->getRepository()->getPopularAssets();
+        $popularAssets        = array();
+        foreach ($popularAssetEntities as $asset) {
+            $popularAssets[] = array(
+                'id'            => $asset->getId(),
+                'title'         => $asset->getTitle(),
+                'downloadCount' => $asset->getDownloadCount()
+            );
+        }
+
+        $popularCampaigns = $this->factory->getModel('campaign')->getRepository()->getPopularCampaigns();
+
+        $returnRate = 0;
+        $totalVisits = array_sum($newReturningVisitors);
+        if ($totalVisits > 0) {
+            $returnRate = round($newReturningVisitors['returning'] / $totalVisits * 100);
         }
 
         $clickRate = 0;
 
-        if ($sentReadCount['readCount']) {
-            $clickRate = round($clickthroughCount / $sentReadCount['readCount'] * 100);
+        if ($sentReadCount['sent_count'] > 0) {
+            $clickRate = round($clickthroughCount / $sentReadCount['sent_count'] * 100);
         }
 
-        $countries = array_flip(Intl::getRegionBundle()->getCountryNames());
+        $countries = array_flip(Intl::getRegionBundle()->getCountryNames('en'));
         $mapData = array();
 
         /** @var \Mautic\LeadBundle\Entity\LeadRepository $leadRepository */
@@ -71,17 +99,36 @@ class DefaultController extends CommonController
         }
 
         // Audit Log
-        $logs = $this->factory->getModel('core.auditLog')->getLogForObject(null, null, 10);
+        $logs = $this->factory->getModel('core.auditLog')->getLogForObject(null, null);
 
         // Get names of log's items
-        foreach ($logs as &$log) {
+        $router = $this->factory->getRouter();
+        foreach ($logs as $key => &$log) {
             if (!empty($log['bundle']) && !empty($log['object']) && !empty($log['objectId'])) {
-                $model = $this->factory->getModel($log['bundle'] . '.' . $log['object']);
-                $item = $model->getEntity($log['objectId']);
-                if (method_exists($item, $model->getNameGetter())) {
-                    $log['objectName'] = $item->{$model->getNameGetter()}();
-                } else {
-                    $log['objectName'] = '';
+                try {
+                    $model = $this->factory->getModel($log['bundle'].'.'.$log['object']);
+                    $item  = $model->getEntity($log['objectId']);
+                    if (method_exists($item, $model->getNameGetter())) {
+                        $log['objectName'] = $item->{$model->getNameGetter()}();
+
+                        if ($log['bundle'] == 'lead' && $log['objectName'] == 'mautic.lead.lead.anonymous') {
+                            $log['objectName'] = $this->factory->getTranslator()->trans('mautic.lead.lead.anonymous');
+                        }
+                    } else {
+                        $log['objectName'] = '';
+                    }
+
+                    $routeName = 'mautic_'.$log['bundle'].'_action';
+                    if ($router->getRouteCollection()->get($routeName) !== null) {
+                        $log['route'] = $router->generate(
+                            'mautic_'.$log['bundle'].'_action',
+                            array('objectAction' => 'view', 'objectId' => $log['objectId'])
+                        );
+                    } else {
+                        $log['route'] = false;
+                    }
+                } catch (\Exception $e) {
+                    unset($logs[$key]);
                 }
             }
         }
@@ -105,7 +152,7 @@ class DefaultController extends CommonController
             'viewParameters'  =>  array(
                 'sentReadCount'     => $sentReadCount,
                 'clickthroughCount' => $clickthroughCount,
-                'openRate'          => $openRate,
+                'returnRate'        => $returnRate,
                 'clickRate'         => $clickRate,
                 'newReturningVisitors' => $newReturningVisitors,
                 'weekVisitors'      => $weekVisitors,

@@ -10,12 +10,13 @@
 namespace Mautic\CoreBundle\EventListener;
 
 use Doctrine\Common\Annotations\AnnotationReader;
+use Doctrine\Common\EventSubscriber;
 use Doctrine\ORM\Event\LoadClassMetadataEventArgs;
 
 /**
  * Class DoctrineEventsSubscriber
  */
-class DoctrineEventsSubscriber implements \Doctrine\Common\EventSubscriber
+class DoctrineEventsSubscriber implements EventSubscriber
 {
     /**
      * {@inheritdoc}
@@ -37,6 +38,7 @@ class DoctrineEventsSubscriber implements \Doctrine\Common\EventSubscriber
             return;
         }
 
+        /** @var \Doctrine\ORM\Mapping\ClassMetadataInfo $classMetadata */
         $classMetadata = $args->getClassMetadata();
 
         // Do not re-apply the prefix in an inheritance hierarchy.
@@ -48,25 +50,51 @@ class DoctrineEventsSubscriber implements \Doctrine\Common\EventSubscriber
             //if in the installer, use the prefix set by it rather than what is cached
             $prefix = MAUTIC_TABLE_PREFIX;
 
-            $classMetadata->setPrimaryTable(array('name' =>  $prefix . $classMetadata->getTableName()));
+            // Prefix indexes
+            $uniqueConstraints = array();
+            if (isset($classMetadata->table['uniqueConstraints'])) {
+                foreach ($classMetadata->table['uniqueConstraints'] as $name => $uc) {
+                    $uniqueConstraints[$prefix . $name] = $uc;
+                }
+            }
+
+            $indexes = array();
+            if (isset($classMetadata->table['indexes'])) {
+                foreach ($classMetadata->table['indexes'] as $name => $uc) {
+                    $indexes[$prefix . $name] = $uc;
+                }
+            }
+
+            // Prefix the table
+            $classMetadata->setPrimaryTable(array(
+                'name'              => $prefix . $classMetadata->getTableName(),
+                'indexes'           => $indexes,
+                'uniqueConstraints' => $uniqueConstraints
+            ));
 
             foreach ($classMetadata->getAssociationMappings() as $fieldName => $mapping) {
-                if ($mapping['type'] == \Doctrine\ORM\Mapping\ClassMetadataInfo::MANY_TO_MANY
-                    && isset($classMetadata->associationMappings[$fieldName]['joinTable']['name'])) {
+                if ($mapping['type'] == \Doctrine\ORM\Mapping\ClassMetadataInfo::MANY_TO_MANY && isset($classMetadata->associationMappings[$fieldName]['joinTable']['name'])) {
                     $mappedTableName = $classMetadata->associationMappings[$fieldName]['joinTable']['name'];
                     $classMetadata->associationMappings[$fieldName]['joinTable']['name'] = $prefix . $mappedTableName;
                 }
             }
 
-            $reader = new AnnotationReader();
-            $class = $classMetadata->getReflectionClass();
+            // Prefix sequences if supported by the DB platform
+            if ($classMetadata->isIdGeneratorSequence()) {
+                $newDefinition                 = $classMetadata->sequenceGeneratorDefinition;
+                $newDefinition['sequenceName'] = $prefix . $newDefinition['sequenceName'];
 
-            $annotation = $reader->getClassAnnotation($class, 'Mautic\CoreBundle\Doctrine\Annotation\LoadClassMetadataCallback');
-
-            if (null !== $annotation) {
-                if (method_exists($class->getName(), $annotation->functionName['value'])) {
-                    $func = $class->getName() . '::' . $annotation->functionName['value'];
-                    call_user_func($func, $args);
+                $classMetadata->setSequenceGeneratorDefinition($newDefinition);
+                $em = $args->getEntityManager();
+                if (isset($classMetadata->idGenerator)) {
+                    $sequenceGenerator = new \Doctrine\ORM\Id\SequenceGenerator(
+                        $em->getConfiguration()->getQuoteStrategy()->getSequenceName(
+                            $newDefinition,
+                            $classMetadata,
+                            $em->getConnection()->getDatabasePlatform()),
+                        $newDefinition['allocationSize']
+                    );
+                    $classMetadata->setIdGenerator($sequenceGenerator);
                 }
             }
         }

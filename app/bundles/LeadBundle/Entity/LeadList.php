@@ -11,91 +11,88 @@ namespace Mautic\LeadBundle\Entity;
 
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\ORM\Mapping as ORM;
+use Mautic\ApiBundle\Serializer\Driver\ApiMetadataDriver;
+use Mautic\CoreBundle\Doctrine\Mapping\ClassMetadataBuilder;
 use Mautic\CoreBundle\Entity\FormEntity;
 use Mautic\LeadBundle\Form\Validator\Constraints\UniqueUserAlias;
 use Symfony\Component\Validator\Mapping\ClassMetadata;
 use Symfony\Component\Validator\Constraints as Assert;
-use JMS\Serializer\Annotation as Serializer;
 
 /**
  * Class LeadList
- * @ORM\Table(name="lead_lists")
- * @ORM\Entity(repositoryClass="Mautic\LeadBundle\Entity\LeadListRepository")
- * @Serializer\ExclusionPolicy("all")
+ *
+ * @package Mautic\LeadBundle\Entity
  */
 class LeadList extends FormEntity
 {
     /**
-     * @ORM\Column(type="integer")
-     * @ORM\Id()
-     * @ORM\GeneratedValue(strategy="AUTO")
-     * @Serializer\Expose
-     * @Serializer\Since("1.0")
-     * @Serializer\Groups({"leadListDetails", "leadListList"})
+     * @var int
      */
     private $id;
 
     /**
-     * @ORM\Column(type="string")
-     * @Serializer\Expose
-     * @Serializer\Since("1.0")
-     * @Serializer\Groups({"leadListDetails", "leadListList"})
+     * @var string
      */
     private $name;
 
     /**
-     * @ORM\Column(type="string")
-     * @Serializer\Expose
-     * @Serializer\Since("1.0")
-     * @Serializer\Groups({"leadListDetails", "leadListList"})
-     */
-    private $alias;
-
-    /**
-     * @ORM\Column(type="text", nullable=true)
-     * @Serializer\Expose
-     * @Serializer\Since("1.0")
-     * @Serializer\Groups({"leadListDetails", "leadListList"})
+     * @var string
      */
     private $description;
 
     /**
-     * @ORM\Column(type="array")
-     * @Serializer\Expose
-     * @Serializer\Since("1.0")
-     * @Serializer\Groups({"leadListDetails"})
+     * @var string
      */
-    private $filters;
+    private $alias;
 
     /**
-     * @ORM\Column(name="is_global", type="boolean")
-     * @Serializer\Expose
-     * @Serializer\Since("1.0")
-     * @Serializer\Groups({"leadListDetails"})
+     * @var array
+     */
+    private $filters = array();
+
+    /**
+     * @var bool
      */
     private $isGlobal = true;
 
     /**
-     * @ORM\ManyToMany(targetEntity="Lead", fetch="EXTRA_LAZY", indexBy="id", cascade={"remove"})
-     * @ORM\JoinTable(name="lead_lists_included_leads")
-     */
-    private $includedLeads;
-
-    /**
-     * @ORM\ManyToMany(targetEntity="Lead", fetch="EXTRA_LAZY", indexBy="id", cascade={"remove"})
-     * @ORM\JoinTable(name="lead_lists_excluded_leads")
-     */
-    private $excludedLeads;
-
-    /**
-     * @var array Used to populate the IDs of included Leads
+     * @var ArrayCollection
      */
     private $leads;
 
+    /**
+     * Construct
+     */
     public function __construct()
     {
-        $this->includedLeads = new ArrayCollection();
-        $this->excludedLeads = new ArrayCollection();
+        $this->leads = new ArrayCollection();
+    }
+
+    /**
+     * @param ORM\ClassMetadata $metadata
+     */
+    public static function loadMetadata (ORM\ClassMetadata $metadata)
+    {
+        $builder = new ClassMetadataBuilder($metadata);
+
+        $builder->setTable('lead_lists')
+            ->setCustomRepositoryClass('Mautic\LeadBundle\Entity\LeadListRepository');
+
+        $builder->addIdColumns();
+
+        $builder->addField('alias', 'string');
+
+        $builder->addField('filters', 'array');
+
+        $builder->createField('isGlobal', 'boolean')
+            ->columnName('is_global')
+            ->build();
+
+        $builder->createOneToMany('leads', 'ListLead')
+            ->setIndexBy('id')
+            ->mappedBy('list')
+            ->fetchExtraLazy()
+            ->build();
     }
 
     /**
@@ -104,13 +101,38 @@ class LeadList extends FormEntity
     public static function loadValidatorMetadata(ClassMetadata $metadata)
     {
         $metadata->addPropertyConstraint('name', new Assert\NotBlank(
-            array('message' => 'mautic.lead.list.name.notblank')
+            array('message' => 'mautic.core.name.required')
         ));
 
         $metadata->addConstraint(new UniqueUserAlias(array(
             'field'   => 'alias',
             'message' => 'mautic.lead.list.alias.unique'
         )));
+    }
+
+    /**
+     * Prepares the metadata for API usage
+     *
+     * @param $metadata
+     */
+    public static function loadApiMetadata(ApiMetadataDriver $metadata)
+    {
+        $metadata->setGroupPrefix('leadList')
+            ->addListProperties(
+                array(
+                    'id',
+                    'name',
+                    'alias',
+                    'description'
+                )
+            )
+            ->addProperties(
+                array(
+                    'filters',
+                    'isGlobal'
+                )
+            )
+            ->build();
     }
 
     /**
@@ -254,120 +276,12 @@ class LeadList extends FormEntity
     }
 
     /**
-     * Add lead
-     *
-     * @param \Mautic\LeadBundle\Entity\Lead $lead
-
-     */
-    public function addLead(\Mautic\LeadBundle\Entity\Lead $lead, $checkAgainstExcluded = false)
-    {
-        if ($checkAgainstExcluded) {
-            if (!$this->excludedLeads->contains($lead)) {
-                $this->includedLeads[] = $lead;
-                return true;
-            }
-            return false;
-        } else {
-            $this->includeLead($lead);
-        }
-
-        return $this;
-    }
-
-    /**
-     * Remove lead
-     *
-     * @param \Mautic\LeadBundle\Entity\Lead $users
-     */
-    public function removeLead(\Mautic\LeadBundle\Entity\Lead $lead, $checkAgainstExcluded = false)
-    {
-        if ($checkAgainstExcluded) {
-            //if the lead is in the excluded list, it was manually added there so don't remove it
-            if (!$this->excludedLeads->contains($lead) && $this->includedLeads->contains($lead)) {
-                $this->includedLeads->removeElement($lead);
-                return true;
-            }
-            return false;
-        } else {
-            $this->excludeLead($lead);
-        }
-
-        return $this;
-    }
-
-    /**
-     * Get manual leads
+     * Get leads
      *
      * @return \Doctrine\Common\Collections\Collection
      */
-    public function getIncludedLeads()
-    {
-        return $this->includedLeads;
-    }
-
-    /**
-     * Add lead
-     *
-     * @param \Mautic\LeadBundle\Entity\Lead $lead
-     */
-    public function excludeLead(\Mautic\LeadBundle\Entity\Lead $lead)
-    {
-        if (!$this->excludedLeads->contains($lead)) {
-            $this->excludedLeads[] = $lead;
-        }
-
-        if ($this->includedLeads->contains($lead)) {
-            $this->includedLeads->removeElement($lead);
-        }
-    }
-
-    /**
-     * @param Lead $lead
-     */
-    public function includeLead(\Mautic\LeadBundle\Entity\Lead $lead)
-    {
-        if (!$this->includedLeads->contains($lead)) {
-            $this->includedLeads[] = $lead;
-        }
-
-        if ($this->excludedLeads->contains($lead)) {
-            $this->excludedLeads->removeElement($lead);
-        }
-    }
-
-    /**
-     * Get manual leads
-     *
-     * @return \Doctrine\Common\Collections\Collection
-     */
-    public function getExcludedLeads()
-    {
-        return $this->excludedLeads;
-    }
-
-    /**
-     * @return array
-     */
-    public function getLeads ()
+    public function getLeads()
     {
         return $this->leads;
-    }
-
-    /**
-     * @param array $leads
-     */
-    public function setLeads (array $leads)
-    {
-        $this->leads = $leads;
-    }
-
-    public function setIncludedLeads($leads)
-    {
-        $this->includedLeads = $leads;
-    }
-
-    public function setExcludedLeads($leads)
-    {
-        $this->excludedLeads = $leads;
     }
 }

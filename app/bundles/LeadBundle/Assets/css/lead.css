@@ -1,6 +1,6 @@
 /* LeadBundle */
 
-.col-leadfield-id, .col-leadlist-id {
+.col-leadfield-id, .col-leadlist-id, .col-lead-id {
     width: 75px;
 }
 
@@ -18,10 +18,6 @@
 
 .leadfield-list .fa-asterisk:hover, .leadfield-list .fa-eye:hover, .leadfield-list .fa-lock:hover, .leadfield-list .fa-list:hover {
     color: #7D5B71;
-}
-
-.col-lead-actions, .col-leadlist-actions, .col-leadfield-actions {
-    width: 25px;
 }
 
 .leadlist-filter a {
@@ -105,4 +101,29 @@ ul.tag-cloud li {
     height: 250px;
     overflow-y: auto;
     overflow-x: hidden;
+}
+
+.card.highlight {
+    background-color: #faf2cc;
+    border: 3px solid #4e5d9d !important;
+}
+
+.lead-avatar-panel {
+    position: relative;
+}
+
+.lead-avatar-panel .avatar-collapser a.arrow {
+    position: absolute;
+    top:0;
+    right: 0px;
+    margin: 0 3px 0 0;
+    padding: 0 10px;
+}
+
+.lead-avatar-panel .img-responsive {
+    min-width: 100%;
+}
+
+.lead-merge-options {
+    position: relative;
 }

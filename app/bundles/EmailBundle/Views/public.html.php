@@ -16,12 +16,12 @@ if (!empty($inBrowser)) {
 }
 
 //Set the slots
-foreach ($slots as $slot) {
+foreach ($slots as $slot => $slotConfig) {
+    if (is_numeric($slot)) {
+        $slot = $slotConfig;
+        $slotConfig = array();
+    }
+
     $value = isset($content[$slot]) ? $content[$slot] : "";
     $view['slots']->set($slot, $value);
 }
-
-//add tracking pixel to builder slot
-$view['slots']->set('builder', '<img height="1" width="1" src="' . $view['router']->generate('mautic_email_tracker', array(
-    'idHash' => $idHash
-), true) . '" />');

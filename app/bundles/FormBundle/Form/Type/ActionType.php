@@ -25,32 +25,41 @@ class ActionType extends AbstractType
      */
     public function buildForm(FormBuilderInterface $builder, array $options)
     {
-        $builder->addEventSubscriber(new CleanFormSubscriber(array('description' => 'html')));
+        $masks = array('description' => 'html');
 
         $builder->add('name', 'text', array(
-            'label'      => 'mautic.form.action.name',
+            'label'      => 'mautic.core.name',
             'label_attr' => array('class' => 'control-label'),
             'attr'       => array('class' => 'form-control'),
             'required'   => false
         ));
 
         $builder->add('description', 'textarea', array(
-            'label'      => 'mautic.form.action.description',
+            'label'      => 'mautic.core.description',
             'label_attr' => array('class' => 'control-label'),
             'attr'       => array('class' => 'form-control editor'),
             'required'   => false
         ));
 
-        $formType = $options['settings']['formType'];
-
-        $properties = (!empty($options['data']['properties'])) ? $options['data']['properties'] : null;
-        $builder->add('properties', $formType, array(
+        $properties      = (!empty($options['data']['properties'])) ? $options['data']['properties'] : null;
+        $formType        = $options['settings']['formType'];
+        $formTypeOptions = array(
             'label'  => false,
             'data'   => $properties,
             'attr'   => array(
                 'data-formid' => $options['formId'] //sneaky way of feeding the formId without requiring the option
-            )
-        ));
+            ));
+        if (isset($options['settings']['formTypeCleanMasks'])) {
+            $masks['properties'] = $options['settings']['formTypeCleanMasks'];
+        }
+        if (!empty($options['settings']['formTypeOptions'])) {
+            // Ensure that attr is not overwritten
+            if (isset($options['settings']['formTypeOptions']['attr'])) {
+                $options['settings']['formTypeOptions']['attr']['data-formid'] = $options['formId'];
+            }
+            $formTypeOptions = array_merge($formTypeOptions, $options['settings']['formTypeOptions']);
+        }
+        $builder->add('properties', $formType, $formTypeOptions);
 
         $builder->add('type', 'hidden');
 
@@ -67,12 +76,14 @@ class ActionType extends AbstractType
             'save_text' => $btnValue,
             'save_icon' => $btnIcon,
             'apply_text' => false,
-            'container_class' => 'bottom-formaction-buttons'
+            'container_class' => 'bottom-form-buttons'
         ));
 
         $builder->add('formId', 'hidden', array(
             'mapped' => false
         ));
+
+        $builder->addEventSubscriber(new CleanFormSubscriber($masks));
 
         if (!empty($options["action"])) {
             $builder->setAction($options["action"]);

@@ -31,18 +31,9 @@ class PointRepository extends CommonRepository
             ->from('MauticPointBundle:Point', $this->getTableAlias())
             ->leftJoin($this->getTableAlias().'.category', 'cat');
 
-        $this->buildClauses($q, $args);
+        $args['qb'] = $q;
 
-        $query = $q->getQuery();
-
-        if (isset($args['hydration_mode'])) {
-            $mode = strtoupper($args['hydration_mode']);
-            $query->setHydrationMode(constant("\\Doctrine\\ORM\\Query::$mode"));
-        }
-
-        $results = new Paginator($query);
-
-        return $results;
+        return parent::getEntities($args);
     }
 
     /**
@@ -62,27 +53,15 @@ class PointRepository extends CommonRepository
      */
     public function getPublishedByType($type)
     {
-        $now = new \DateTime();
         $q = $this->createQueryBuilder('p')
-            ->select('partial p.{id, type, name, properties}');
+            ->select('partial p.{id, type, name, delta, properties}')
+            ->setParameter('type', $type);
 
         //make sure the published up and down dates are good
-        $q->where(
-            $q->expr()->andX(
-                $q->expr()->eq('p.type', ':type'),
-                $q->expr()->eq('p.isPublished', true),
-                $q->expr()->orX(
-                    $q->expr()->isNull('p.publishUp'),
-                    $q->expr()->gte('p.publishUp', ':now')
-                ),
-                $q->expr()->orX(
-                    $q->expr()->isNull('p.publishDown'),
-                    $q->expr()->lte('p.publishDown', ':now')
-                )
-            )
-        )
-            ->setParameter('now', $now)
-            ->setParameter('type', $type);
+        $expr = $this->getPublishedByDateExpression($q);
+        $expr->add($q->expr()->eq('p.type', ':type'));
+
+        $q->where($expr);
 
         return $q->getQuery()->getResult();
     }

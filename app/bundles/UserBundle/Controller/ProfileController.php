@@ -57,7 +57,7 @@ class ProfileController extends FormController
                         $overrides['lastName']  = $me->getLastName();
                         $form->remove('firstName');
                         $form->add('firstName_unbound', 'text', array(
-                            'label'      => 'mautic.user.user.form.firstname',
+                            'label'      => 'mautic.core.firstname',
                             'label_attr' => array('class' => 'control-label'),
                             'attr'       => array('class' => 'form-control'),
                             'mapped'     => false,
@@ -68,7 +68,7 @@ class ProfileController extends FormController
 
                         $form->remove('lastName');
                         $form->add('lastName_unbound', 'text', array(
-                            'label'      => 'mautic.user.user.form.lastname',
+                            'label'      => 'mautic.core.lastname',
                             'label_attr' => array('class' => 'control-label'),
                             'attr'       => array('class' => 'form-control'),
                             'mapped'     => false,
@@ -82,7 +82,7 @@ class ProfileController extends FormController
                         $overrides['username'] = $me->getUsername();
                         $form->remove('username');
                         $form->add('username_unbound', 'text', array(
-                            'label'      => 'mautic.user.user.form.username',
+                            'label'      => 'mautic.core.username',
                             'label_attr' => array('class' => 'control-label'),
                             'attr'       => array('class' => 'form-control'),
                             'mapped'     => false,
@@ -95,7 +95,7 @@ class ProfileController extends FormController
                         $overrides['position'] = $me->getPosition();
                         $form->remove('position');
                         $form->add('position_unbound', 'text', array(
-                            'label'      => 'mautic.user.user.form.position',
+                            'label'      => 'mautic.core.position',
                             'label_attr' => array('class' => 'control-label'),
                             'attr'       => array('class' => 'form-control'),
                             'mapped'     => false,
@@ -108,7 +108,7 @@ class ProfileController extends FormController
                         $overrides['email'] = $me->getEmail();
                         $form->remove('email');
                         $form->add('email_unbound', 'text', array(
-                            'label'      => 'mautic.user.user.form.email',
+                            'label'      => 'mautic.core.type.email',
                             'label_attr' => array('class' => 'control-label'),
                             'attr'       => array('class' => 'form-control'),
                             'mapped'     => false,
@@ -121,17 +121,6 @@ class ProfileController extends FormController
                 }
             }
         }
-
-        //add an input to request the current password in order to change existing details
-        $form->add('currentPassword', 'password', array(
-            'label'      => 'mautic.user.account.form.password.current',
-            'label_attr' => array('class' => 'control-label'),
-            'attr'       => array(
-                'class'    => 'form-control',
-                'tooltip'  => 'mautic.user.account.form.help.password.current',
-                'preaddon' => 'fa fa-lock'
-            )
-        ));
 
         //Check for a submitted form and process it
         $submitted = $this->factory->getSession()->get('formProcessed', 0);
@@ -151,6 +140,23 @@ class ProfileController extends FormController
 
                     //form is valid so process the data
                     $model->saveEntity($me);
+
+                    //check if the user's locale has been downloaded already, fetch it if not
+                    $installedLanguages = $this->factory->getParameter('supported_languages');
+
+                    if ($me->getLocale() && !array_key_exists($me->getLocale(), $installedLanguages)) {
+                        /** @var \Mautic\CoreBundle\Helper\LanguageHelper $languageHelper */
+                        $languageHelper = $this->factory->getHelper('language');
+
+                        $fetchLanguage = $languageHelper->extractLanguagePackage($me->getLocale());
+
+                        // If there is an error, we need to reset the user's locale to the default
+                        if ($fetchLanguage['error']) {
+                            $me->setLocale(null);
+                            $model->saveEntity($me);
+                            $this->addFlash('mautic.core.could.not.set.language');
+                        }
+                    }
 
                     $returnUrl = $this->generateUrl('mautic_user_account');
 

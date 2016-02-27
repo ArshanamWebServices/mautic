@@ -20,14 +20,12 @@ class TriggerEventRepository extends CommonRepository
     /**
      * Get array of published triggers based on point total
      *
-     * @param int $points
+     * @param int      $points
      *
      * @return array
      */
-    public function getPublishedByPointTotal($points = 0)
+    public function getPublishedByPointTotal($points)
     {
-        $now = new \DateTime();
-
         $q = $this->createQueryBuilder('a')
             ->select('partial a.{id, type, name, properties}, partial r.{id, name, points, color}')
             ->leftJoin('a.trigger', 'r')
@@ -35,13 +33,14 @@ class TriggerEventRepository extends CommonRepository
 
         //make sure the published up and down dates are good
         $expr = $this->getPublishedByDateExpression($q, 'r');
-        $expr->add(
-            $q->expr()->gte('r.points', $points)
-        );
-        $q->where($expr)
-            ->setParameter('now', $now);
 
-        return $q->getQuery()->getResult();
+        $expr->add(
+            $q->expr()->lte('r.points', (int) $points)
+        );
+
+        $q->where($expr);
+
+        return $q->getQuery()->getArrayResult();
     }
 
     /**
@@ -53,7 +52,6 @@ class TriggerEventRepository extends CommonRepository
      */
     public function getPublishedByType($type)
     {
-        $now = new \DateTime();
         $q = $this->createQueryBuilder('e')
             ->select('partial e.{id, type, name, properties}, partial t.{id, name, points, color}')
             ->join('e.trigger', 't')
@@ -65,7 +63,6 @@ class TriggerEventRepository extends CommonRepository
             $q->expr()->eq('e.type', ':type')
         );
         $q->where($expr)
-            ->setParameter('now', $now)
             ->setParameter('type', $type);
 
         $results = $q->getQuery()->getResult();
@@ -80,7 +77,7 @@ class TriggerEventRepository extends CommonRepository
     public function getLeadTriggeredEvents($leadId)
     {
         $q = $this->_em->getConnection()->createQueryBuilder()
-            ->select('e')
+            ->select('e.*')
             ->from(MAUTIC_TABLE_PREFIX . 'point_lead_event_log', 'x')
             ->innerJoin('x', MAUTIC_TABLE_PREFIX . 'point_trigger_events', 'e', 'x.event_id = e.id')
             ->innerJoin('e', MAUTIC_TABLE_PREFIX . 'point_triggers', 't', 'e.trigger_id = t.id');

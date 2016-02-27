@@ -46,17 +46,25 @@ class LeadFieldData extends AbstractFixture implements OrderedFixtureInterface, 
             'title',
             'firstname',
             'lastname',
-            'position',
             'company',
+            'position',
             'email',
             'phone',
             'mobile',
+            'fax',
             'address1',
             'address2',
-            'country',
             'city',
             'state',
-            'zipcode'
+            'zipcode',
+            'country',
+            'website',
+            'twitter',
+            'facebook',
+            'googleplus',
+            'skype',
+            'instagram',
+            'foursquare'
         );
 
         $leadsSchema = $this->container->get('mautic.factory')->getSchemaHelper('column', 'leads');
@@ -74,6 +82,7 @@ class LeadFieldData extends AbstractFixture implements OrderedFixtureInterface, 
                 $type = 'tel';
             } elseif ($name == 'email') {
                 $type = 'email';
+                $entity->setIsUniqueIdentifer(true);
             } else {
                 $type = 'text';
             }
@@ -82,20 +91,48 @@ class LeadFieldData extends AbstractFixture implements OrderedFixtureInterface, 
                 $entity->setProperties(array("list" =>"|Mr|Mrs|Miss"));
             }
             $entity->setType($type);
-            $entity->setIsFixed(true);
+
+            $fixed = in_array($name, array(
+                'title',
+                'firstname',
+                'lastname',
+                'position',
+                'company',
+                'email',
+                'phone',
+                'mobile',
+                'address1',
+                'address2',
+                'country',
+                'city',
+                'state',
+                'zipcode'
+            )) ? true : false;
+            $entity->setIsFixed($fixed);
+
             $entity->setOrder(($key+1));
             $entity->setAlias($name);
             $listable    = in_array($name, array(
                 'address1',
                 'address2',
                 'phone',
-                'mobile'
+                'mobile',
+                'fax',
+                'twitter',
+                'facebook',
+                'googleplus',
+                'skype',
+                'foursquare',
+                'instagram',
+                'website'
             )) ? false : true;
             $entity->setIsListable($listable);
 
             $shortVisible = in_array($name, array('firstname', 'lastname', 'email')) ? true : false;
             $entity->setIsShortVisible($shortVisible);
-            $entity->setGroup('core');
+
+            $group = (in_array($name, array('twitter', 'facebook', 'googleplus', 'skype', 'instagram', 'foursquare'))) ? 'social' : 'core';
+            $entity->setGroup($group);
 
             $manager->persist($entity);
             $manager->flush();
@@ -103,7 +140,7 @@ class LeadFieldData extends AbstractFixture implements OrderedFixtureInterface, 
             //add the column to the leads table
             $leadsSchema->addColumn(array(
                 'name' => $name,
-                'type' => 'text',
+                'type' => in_array($name, array('email','country')) ? 'string' : 'text',
                 'options' => array(
                     'notnull' => false
                 )
@@ -112,6 +149,14 @@ class LeadFieldData extends AbstractFixture implements OrderedFixtureInterface, 
             $this->addReference('leadfield-'.$name, $entity);
         }
         $leadsSchema->executeChanges();
+
+        $indexHelper = $this->container->get('mautic.factory')->getSchemaHelper('index', 'leads');
+
+        // Add email and country indexes
+        $indexHelper->setName('leads');
+        $indexHelper->addIndex('email', 'email_search');
+        $indexHelper->addIndex('country', 'country_search');
+        $indexHelper->executeChanges();
     }
 
     /**

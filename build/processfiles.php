@@ -18,7 +18,9 @@ system('rm app/phpunit.*');
 system('rm app/tests.bootstrap*');
 system('rm -rf app/bundles/*/Tests');
 system('rm -rf app/bundles/CoreBundle/Test');
+system('rm -rf app/bundles/CoreBundle/Tests');
 system('rm -rf app/cache');
+system('rm -rf media/files/*');
 system('rm app/config/config_dev.php');
 system('rm app/config/config_test.php');
 system('rm app/config/local*.php');
@@ -95,6 +97,16 @@ system('rm vendor/doctrine/doctrine-bundle/composer.json');
 system('rm vendor/doctrine/doctrine-bundle/phpunit.xml.dist');
 system('rm vendor/doctrine/doctrine-bundle/README.md');
 
+// doctrine/doctrine-cache-bundle
+system('rm -rf vendor/doctrine/doctrine-cache-bundle/Doctrine/Bundle/DoctrineCacheBundle/Tests');
+system('rm vendor/doctrine/doctrine-cache-bundle/Doctrine/Bundle/DoctrineCacheBundle/.coveralls.yml');
+system('rm vendor/doctrine/doctrine-cache-bundle/Doctrine/Bundle/DoctrineCacheBundle/.gitignore');
+system('rm vendor/doctrine/doctrine-cache-bundle/Doctrine/Bundle/DoctrineCacheBundle/.travis.yml');
+system('rm vendor/doctrine/doctrine-cache-bundle/Doctrine/Bundle/DoctrineCacheBundle/composer.json');
+system('rm vendor/doctrine/doctrine-cache-bundle/Doctrine/Bundle/DoctrineCacheBundle/phpunit.xml.dist');
+system('rm vendor/doctrine/doctrine-cache-bundle/Doctrine/Bundle/DoctrineCacheBundle/README.markdown');
+system('rm vendor/doctrine/doctrine-cache-bundle/Doctrine/Bundle/DoctrineCacheBundle/ruleset.xml');
+
 // doctrine/doctrine-fixtures-bundle
 system('rm vendor/doctrine/doctrine-fixtures-bundle/Doctrine/Bundle/FixturesBundle/.gitignore');
 system('rm vendor/doctrine/doctrine-fixtures-bundle/Doctrine/Bundle/FixturesBundle/composer.json');
@@ -160,6 +172,19 @@ system('rm vendor/friendsofsymfony/rest-bundle/FOS/RestBundle/composer.json');
 system('rm vendor/friendsofsymfony/rest-bundle/FOS/RestBundle/phpunit.xml.dist');
 system('rm vendor/friendsofsymfony/rest-bundle/FOS/RestBundle/README.md');
 system('rm vendor/friendsofsymfony/rest-bundle/FOS/RestBundle/UPGRADING.md');
+
+// guzzle/guzzle
+system('rm -rf vendor/guzzle/guzzle/docs');
+system('rm -rf vendor/guzzle/guzzle/tests');
+system('rm vendor/guzzle/guzzle/.gitignore');
+system('rm vendor/guzzle/guzzle/.travis.yml');
+system('rm vendor/guzzle/guzzle/build.xml');
+system('rm vendor/guzzle/guzzle/CHANGELOG.md');
+system('rm vendor/guzzle/guzzle/composer.json');
+system('rm vendor/guzzle/guzzle/phar-stub.php');
+system('rm vendor/guzzle/guzzle/phpunit.xml.dist');
+system('rm vendor/guzzle/guzzle/README.md');
+system('rm vendor/guzzle/guzzle/UPGRADING.md');
 
 // ircmaxell/password-compat
 system('rm vendor/ircmaxell/password-compat/composer.json');
@@ -230,6 +255,17 @@ system('rm vendor/joomla/uri/composer.json');
 system('rm vendor/joomla/uri/phpunit.xml.dist');
 system('rm vendor/joomla/uri/README.md');
 
+// knplabs/gaufrette
+system('rm -rf vendor/knplabs/gaufrette/bin');
+system('rm -rf vendor/knplabs/gaufrette/spec');
+system('rm -rf vendor/knplabs/gaufrette/tests');
+system('rm vendor/knplabs/gaufrette/.gitignore');
+system('rm vendor/knplabs/gaufrette/.travis.yml');
+system('rm vendor/knplabs/gaufrette/composer.json');
+system('rm vendor/knplabs/gaufrette/composer.lock');
+system('rm vendor/knplabs/gaufrette/phpunit.xml.dist');
+system('rm vendor/knplabs/gaufrette/README.markdown');
+
 // knplabs/knp-menu
 system('rm -rf vendor/knplabs/knp-menu/doc');
 system('rm -rf vendor/knplabs/knp-menu/tests');
@@ -267,6 +303,15 @@ system('rm vendor/monolog/monolog/CHANGELOG.mdown');
 system('rm vendor/monolog/monolog/composer.json');
 system('rm vendor/monolog/monolog/phpunit.xml.dist');
 system('rm vendor/monolog/monolog/README.mdown');
+
+// mrclay/minify
+system('rm -rf vendor/mrclay/minify/min_unit_tests');
+system('rm vendor/mrclay/minify/.gitignore');
+system('rm vendor/mrclay/minify/composer.json');
+system('rm vendor/mrclay/minify/HISTORY.txt');
+system('rm vendor/mrclay/minify/MIN.txt');
+system('rm vendor/mrclay/minify/README.txt');
+system('rm vendor/mrclay/minify/UPGRADING');
 
 // nelmio/api-doc-bundle
 system('rm -rf vendor/nelmio/api-doc-bundle/Nelmio/ApiDocBundle/Tests');
@@ -309,6 +354,18 @@ system('rm vendor/phpoption/phpoption/README.md');
 system('rm vendor/psr/log/.gitignore');
 system('rm vendor/psr/log/composer.json');
 system('rm vendor/psr/log/README.md');
+
+// rackspace/php-opencloud
+system('rm -rf vendor/rackspace/php-opencloud/docs');
+system('rm -rf vendor/rackspace/php-opencloud/samples');
+system('rm -rf vendor/rackspace/php-opencloud/tests');
+system('rm vendor/rackspace/php-opencloud/.coveralls.yml');
+system('rm vendor/rackspace/php-opencloud/.gitignore');
+system('rm vendor/rackspace/php-opencloud/.travis.yml');
+system('rm vendor/rackspace/php-opencloud/composer.json');
+system('rm vendor/rackspace/php-opencloud/CONTRIBUTING.md');
+system('rm vendor/rackspace/php-opencloud/phpunit.xml.dist');
+system('rm vendor/rackspace/php-opencloud/README.md');
 
 // sensio/distribution-bundle
 system('rm -rf vendor/sensio/distribution-bundle/Sensio/Bundle/DistributionBundle/Resources/bin');
@@ -356,7 +413,8 @@ system('rm vendor/symfony/*/Symfony/*/*/CHANGELOG.md');
 system('rm vendor/symfony/*/Symfony/*/*/composer.json');
 system('rm vendor/symfony/*/Symfony/*/*/phpunit.xml.dist');
 system('rm vendor/symfony/*/Symfony/*/*/README.md');
-system('rm -rf vendor/symfony/console/Symfony/Console/Resources');
+system('rm -rf vendor/symfony/console/Symfony/Component/Console/Resources');
+system('rm -rf vendor/symfony/debug/Symfony/Component/Debug/Resources');
 system('rm -rf vendor/symfony/doctrine-bridge/Symfony/Bridge/Doctrine/Test');
 system('rm -rf vendor/symfony/form/Symfony/Component/Form/Test');
 system('rm -rf vendor/symfony/framework-bundle/Symfony/Bundle/FrameworkBundle/Test');
@@ -401,6 +459,17 @@ system('rm vendor/twig/twig/composer.json');
 system('rm vendor/twig/twig/phpunit.xml.dist');
 system('rm vendor/twig/twig/README.rst');
 
+// webfactory/exceptions-bundle
+system('rm -rf vendor/webfactory/exceptions-bundle/Resources/doc');
+system('rm -rf vendor/webfactory/exceptions-bundle/Tests');
+system('rm vendor/webfactory/exceptions-bundle/.gitignore');
+system('rm vendor/webfactory/exceptions-bundle/.hgtags');
+system('rm vendor/webfactory/exceptions-bundle/.travis.yml');
+system('rm vendor/webfactory/exceptions-bundle/composer.json');
+system('rm vendor/webfactory/exceptions-bundle/phpunit.xml.dist');
+system('rm vendor/webfactory/exceptions-bundle/README.md');
+system('rm vendor/webfactory/exceptions-bundle/UPGRADING.md');
+
 // willdurand/jsonp-callback-validator
 system('rm -rf vendor/willdurand/jsonp-callback-validator/tests');
 system('rm vendor/willdurand/jsonp-callback-validator/.gitignore');
@@ -438,6 +507,16 @@ system('rm vendor/webfactory/exceptions-bundle/composer.json');
 system('rm vendor/webfactory/exceptions-bundle/phpunit.xml.dist');
 system('rm vendor/webfactory/exceptions-bundle/README.md');
 system('rm vendor/webfactory/exceptions-bundle/UPGRADING.md');
+
+// jbroadway/urlify
+system('rm -rf vendor/jbroadway/urlify/tests');
+system('rm vendor/jbroadway/urlify/.gitignore');
+system('rm vendor/jbroadway/urlify/.travis.yml');
+system('rm vendor/jbroadway/urlify/composer.json');
+system('rm vendor/jbroadway/urlify/INSTALL');
+system('rm vendor/jbroadway/urlify/LICENSE');
+system('rm vendor/jbroadway/urlify/phpunit.xml');
+system('rm vendor/jbroadway/urlify/README.md');
 
 // Find any .git directories and nuke them
 system('find . -type d -name .git -exec rm -rf {} \\;');

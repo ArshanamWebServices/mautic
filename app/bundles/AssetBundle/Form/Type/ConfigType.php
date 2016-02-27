@@ -9,14 +9,10 @@
 
 namespace Mautic\AssetBundle\Form\Type;
 
-use Mautic\CoreBundle\Factory\MauticFactory;
-use Mautic\CoreBundle\Form\EventListener\CleanFormSubscriber;
-use Mautic\CoreBundle\Form\EventListener\FormExitSubscriber;
 use Symfony\Component\Form\AbstractType;
-use Symfony\Component\Form\Extension\Core\ChoiceList\ChoiceList;
 use Symfony\Component\Form\FormBuilderInterface;
-use Symfony\Component\OptionsResolver\OptionsResolverInterface;
 use Symfony\Component\Validator\Constraints\NotBlank;
+use Mautic\CoreBundle\Form\DataTransformer\ArrayStringTransformer;
 
 /**
  * Class ConfigType
@@ -40,10 +36,37 @@ class ConfigType extends AbstractType
                 ),
             'constraints' => array(
                 new NotBlank(array(
-                    'message' => 'mautic.config.requiredvalue'
+                    'message' => 'mautic.core.value.required'
                 ))
             )
         ));
+
+        $builder->add('max_size', 'text', array(
+            'label'       => 'mautic.asset.config.form.max.size',
+            'label_attr'  => array('class' => 'control-label'),
+            'attr'        => array(
+                'class' => 'form-control',
+                'tooltip' => 'mautic.asset.config.form.max.size.tooltip'
+                ),
+            'constraints' => array(
+                new NotBlank(array(
+                    'message' => 'mautic.core.value.required'
+                ))
+            )
+        ));
+
+        $arrayStringTransformer = new ArrayStringTransformer();
+        $builder->add(
+            $builder->create('allowed_extensions', 'text', array(
+                'label'      => 'mautic.asset.config.form.allowed.extensions',
+                'label_attr' => array('class' => 'control-label'),
+                'attr'       => array(
+                    'class'   => 'form-control',
+                    'tooltip' => 'mautic.asset.config.form.allowed.extensions.tooltip'
+                ),
+                'required'   => false
+            ))->addViewTransformer($arrayStringTransformer)
+        );
     }
 
     /**

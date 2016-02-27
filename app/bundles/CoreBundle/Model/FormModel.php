@@ -9,7 +9,9 @@
 
 namespace Mautic\CoreBundle\Model;
 
+use Mautic\CoreBundle\Helper\InputHelper;
 use Mautic\UserBundle\Entity\User;
+use Symfony\Component\EventDispatcher\Event;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 /**
@@ -17,28 +19,6 @@ use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
  */
 class FormModel extends CommonModel
 {
-
-    /**
-     * Get a specific entity
-     *
-     * @param $id
-     *
-     * @return null|object
-     */
-    public function getEntity($id = null)
-    {
-        if (null !== $id) {
-            $repo = $this->getRepository();
-            if (method_exists($repo, 'getEntity')) {
-                return $repo->getEntity($id);
-            }
-
-            return $repo->find($id);
-        }
-
-        return null;
-    }
-
     /**
      * Lock an entity to prevent multiple people from editing
      *
@@ -49,7 +29,7 @@ class FormModel extends CommonModel
     public function lockEntity($entity)
     {
         //lock the row if applicable
-        if (method_exists($entity, 'setCheckedOut')) {
+        if (method_exists($entity, 'setCheckedOut') && method_exists($entity, 'getId') && $entity->getId()) {
             $user = $this->factory->getUser();
             if ($user->getId()) {
                 $entity->setCheckedOut(new \DateTime());
@@ -74,7 +54,7 @@ class FormModel extends CommonModel
             if (!empty($checkedOut)) {
                 //is it checked out by the current user?
                 $checkedOutBy = $entity->getCheckedOutBy();
-                if (!empty($checkedOutBy) && $checkedOutBy->getId() !== $this->factory->getUser()->getId()) {
+                if (!empty($checkedOutBy) && $checkedOutBy !== $this->factory->getUser()->getId()) {
                     return true;
                 }
             }
@@ -93,7 +73,7 @@ class FormModel extends CommonModel
     public function unlockEntity($entity, $extra = null)
     {
         //unlock the row if applicable
-        if (method_exists($entity, 'setCheckedOut')) {
+        if (method_exists($entity, 'setCheckedOut') && method_exists($entity, 'getId') && $entity->getId()) {
             //flush any potential changes
             $this->em->refresh($entity);
 
@@ -209,7 +189,6 @@ class FormModel extends CommonModel
         return false;
     }
 
-
     /**
      * Set timestamps and user ids
      *
@@ -221,20 +200,28 @@ class FormModel extends CommonModel
     {
         $user = $this->factory->getUser(true);
         if ($isNew) {
-            if (method_exists($entity, 'setDateAdded')) {
+            if (method_exists($entity, 'setDateAdded') && !$entity->getDateAdded()) {
                 $entity->setDateAdded(new \DateTime());
             }
 
-            if ($user instanceof User && method_exists($entity, 'setCreatedBy')) {
-                $entity->setCreatedBy($user);
+            if ($user instanceof User) {
+                if (method_exists($entity, 'setCreatedBy') && !$entity->getCreatedBy()) {
+                    $entity->setCreatedBy($user);
+                } elseif (method_exists($entity, 'setCreatedByUser') && !$entity->getCreatedByUser()) {
+                    $entity->setCreatedByUser($user->getName());
+                }
             }
         } else {
             if (method_exists($entity, 'setDateModified')) {
                 $entity->setDateModified(new \DateTime());
             }
 
-            if ($user instanceof User && method_exists($entity, 'setModifiedBy')) {
-                $entity->setModifiedBy($user);
+            if ($user instanceof User) {
+                if (method_exists($entity, 'setModifiedBy')) {
+                    $entity->setModifiedBy($user);
+                } elseif (method_exists($entity, 'setModifiedByUser')) {
+                    $entity->setModifiedByUser($user->getName());
+                }
             }
         }
 
@@ -313,14 +300,18 @@ class FormModel extends CommonModel
     /**
      * Dispatches events for child classes
      *
-     * @param string $action
-     * @param object $entity
-     * @param bool   $isNew
-     * @param bool   $event
+     * @param       $action
+     * @param       $entity
+     * @param bool  $isNew
+     * @param Event $event
+     *
+     * @return Event|null
      */
-    protected function dispatchEvent($action, &$entity, $isNew = false, $event = false)
+    protected function dispatchEvent($action, &$entity, $isNew = false, Event $event = null)
     {
         //...
+
+        return $event;
     }
 
     /**
@@ -362,33 +353,41 @@ class FormModel extends CommonModel
     }
 
     /**
-     * Retrieve entity based on id/alias slugs
+     * Cleans a string to be used as an alias. The returned string will be alphanumeric or underscore, less than 25 characters
+     * and if it is a reserved SQL keyword, it will be prefixed with f_
      *
-     * @param string $slug1
-     * @param string $slug2
-     * @param string $slug3
-     *
-     * @return object|bool
+     * @param string   $alias
+     * @param string   $prefix Used when the alias is a reserved keyword by the database platform
+     * @param int|bool $maxLength Maximum number of characters used; 0 to disable
+     * @param string   $spaceCharacter Character to replace spaces with
+     * @return string
+     * @throws \Doctrine\DBAL\DBALException
      */
-    public function getEntityBySlugs($slug1, $slug2 = '', $slug3 = '')
+    public function cleanAlias($alias, $prefix = '', $maxLength = false, $spaceCharacter = '_')
     {
-        if (!empty($slug3)) {
-            $idSlug = $slug3;
-        } elseif (!empty($slug2)) {
-            $idSlug = $slug2;
-        } else {
-            $idSlug = $slug1;
+        // Transliterate to latin characters
+        $alias = InputHelper::transliterate(trim($alias));
+
+        // Some labels are quite long if a question so cut this short
+        $alias = strtolower(InputHelper::alphanum($alias, false, $spaceCharacter));
+
+        // Trim if applicable
+        if ($maxLength) {
+            $alias = substr($alias, 0, $maxLength);
         }
 
-        $parts  = explode(':', $idSlug);
-        if (count($parts) == 2) {
-            $entity = $this->getEntity($parts[0]);
-
-            if (!empty($entity)) {
-                return $entity;
-            }
+        if (substr($alias, -1) == '_') {
+            $alias = substr($alias, 0, -1);
         }
 
-        return false;
+        // Check that alias is SQL safe since it will be used for the column name
+        $databasePlatform = $this->em->getConnection()->getDatabasePlatform();
+        $reservedWords = $databasePlatform->getReservedKeywordsList();
+
+        if ($reservedWords->isKeyword($alias) || is_numeric($alias)) {
+            $alias = $prefix . $alias;
+        }
+
+        return $alias;
     }
 }

@@ -43,8 +43,6 @@ class LoadLeadFieldData extends AbstractFixture implements OrderedFixtureInterfa
      */
     public function load(ObjectManager $manager)
     {
-        $translator = $this->container->get('translator');
-
         $textfields = array(
             'firstname',
             'lastname',
@@ -75,7 +73,7 @@ class LoadLeadFieldData extends AbstractFixture implements OrderedFixtureInterfa
 
         foreach ($textfields as $key => $name) {
             $entity = new LeadField();
-            $entity->setLabel($translator->trans('mautic.lead.field.'.$name, array(), 'fixtures'));
+            $entity->setLabel(ucfirst($name));
             if (in_array($name, array('title', 'company', 'city', 'zipcode'))) {
                 $type = 'lookup';
             } elseif ($name == 'country') {
@@ -88,6 +86,7 @@ class LoadLeadFieldData extends AbstractFixture implements OrderedFixtureInterfa
                 $type = 'url';
             } elseif ($name == 'email') {
                 $type = 'email';
+                $entity->setIsUniqueIdentifer(true);
             } else {
                 $type = 'text';
             }
@@ -133,6 +132,7 @@ class LoadLeadFieldData extends AbstractFixture implements OrderedFixtureInterfa
 
             $shortVisible = in_array($name, array('firstname', 'lastname', 'email')) ? true : false;
             $entity->setIsShortVisible($shortVisible);
+
 
             $group = (in_array($name, array('twitter', 'facebook', 'googleplus', 'skype', 'instagram', 'foursquare'))) ? 'social' : 'core';
             $entity->setGroup($group);

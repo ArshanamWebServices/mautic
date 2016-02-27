@@ -12,6 +12,7 @@ namespace Mautic\CoreBundle\Controller;
 use Mautic\CoreBundle\CoreEvents;
 use Mautic\CoreBundle\Event\GlobalSearchEvent;
 use Mautic\CoreBundle\Helper\InputHelper;
+use Symfony\Component\HttpFoundation\Request;
 
 /**
  * Class DefaultController
@@ -20,15 +21,33 @@ use Mautic\CoreBundle\Helper\InputHelper;
  */
 class DefaultController extends CommonController
 {
-
     /**
      * Generates default index.php
      *
      * @return \Symfony\Component\HttpFoundation\JsonResponse|\Symfony\Component\HttpFoundation\Response
      */
-    public function indexAction()
+    public function indexAction(Request $request)
     {
-        return $this->delegateView('MauticDashboardBundle:Default:index.html.php');
+        $root = $this->factory->getParameter('webroot');
+
+        if (empty($root)) {
+            return $this->redirect($this->generateUrl('mautic_dashboard_index'));
+        } else {
+            /** @var \Mautic\PageBundle\Model\PageModel $pageModel */
+            $pageModel = $this->factory->getModel('page');
+            $page      = $pageModel->getEntity($root);
+
+            if (empty($page)) {
+
+                $this->notFound();
+            }
+
+            $slug = $pageModel->generateSlug($page);
+
+            $request->attributes->set('ignore_mismatch', true);
+
+            return $this->forward('MauticPageBundle:Public:index', array('slug' => $slug));
+        }
     }
 
     /**
@@ -73,5 +92,65 @@ class DefaultController extends CommonController
                 'updateMessage'    => $updateMessage
             )
         ));
+    }
+
+    /**
+     * @param Request $request
+     *
+     * @deprecated Temp fix for pre 1.0.0-rc1
+     *
+     * @return \Symfony\Component\HttpFoundation\RedirectResponse
+     */
+    public function publicBcRedirectAction(Request $request)
+    {
+        $requestUri = $request->getRequestUri();
+
+        $url = str_replace('/p/', '/', $requestUri);
+
+        return $this->redirect($url, 301);
+    }
+
+    /**
+     * @param Request $request
+     *
+     * @deprecated Temp fix for pre 1.0.0-rc2
+     *
+     * @return \Symfony\Component\HttpFoundation\RedirectResponse
+     */
+    public function ajaxBcRedirectAction(Request $request)
+    {
+        $requestUri = $request->getRequestUri();
+
+        if ($actionQuery = $request->query->get('action', false)) {
+            if (strpos($actionQuery, 'core:updateDatabaseMigration') !== false) {
+                // Check for update request and forward to controller if requesting an update so the process will finish
+                $actionQuery = str_replace('core:', '', $actionQuery);
+                return $this->forward("MauticCoreBundle:Ajax:executeAjax", array(
+                    'action'  => $actionQuery,
+                    //forward the request as well as Symfony creates a subrequest without GET/POST
+                    'request' => $this->request
+                ));
+            }
+        }
+
+        $url = str_replace('/ajax', '/s/ajax', $requestUri);
+
+        return $this->redirect($url, 301);
+    }
+
+    /**
+     * @param Request $request
+     *
+     * @deprecated Temp fix for pre 1.0.0-rc2
+     *
+     * @return \Symfony\Component\HttpFoundation\RedirectResponse
+     */
+    public function updateBcRedirectAction(Request $request)
+    {
+        $requestUri = $request->getRequestUri();
+
+        $url = str_replace('/update', '/s/update', $requestUri);
+
+        return $this->redirect($url, 301);
     }
 }

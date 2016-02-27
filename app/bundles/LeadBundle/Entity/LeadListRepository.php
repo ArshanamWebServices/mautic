@@ -9,9 +9,17 @@
 
 namespace Mautic\LeadBundle\Entity;
 
+use Doctrine\DBAL\Query\QueryBuilder;
+use Doctrine\DBAL\Types\DateType;
+use Doctrine\DBAL\Types\FloatType;
+use Doctrine\DBAL\Types\IntegerType;
+use Doctrine\DBAL\Types\TimeType;
 use Doctrine\ORM\PersistentCollection;
-use Doctrine\ORM\Tools\Pagination\Paginator;
+use Mautic\CoreBundle\Doctrine\QueryFormatter\AbstractFormatter;
+use Mautic\CoreBundle\Doctrine\Type\UTCDateTimeType;
 use Mautic\CoreBundle\Entity\CommonRepository;
+use Mautic\CoreBundle\Helper\DateTimeHelper;
+use Mautic\CoreBundle\Helper\InputHelper;
 
 /**
  * LeadListRepository
@@ -23,6 +31,7 @@ class LeadListRepository extends CommonRepository
      * {@inheritdoc}
      *
      * @param int $id
+     *
      * @return mixed|null
      */
     public function getEntity($id = 0)
@@ -37,56 +46,20 @@ class LeadListRepository extends CommonRepository
         } catch (\Exception $e) {
             $entity = null;
         }
+
         return $entity;
-    }
-
-    /**
-     * {@inheritdoc}
-     *
-     * @param array      $args
-     * @param Translator $translator
-     * @return Paginator
-     */
-    public function getEntities($args = array())
-    {
-        $q = $this
-            ->createQueryBuilder('l');
-
-        $this->buildClauses($q, $args);
-
-        $query = $q->getQuery();
-        $result = new Paginator($query);
-
-        if (!empty($args['includeLeadIds'])) {
-            $return = array(
-                'total' => count($result)
-            );
-
-            $iterator = $result->getIterator();
-            foreach ($iterator as &$i) {
-                $leadLists = $this->getLeadsByList($i, true);
-                $i->setLeads($leadLists[$i['id']]);
-            }
-
-            $return['lists'] = $iterator;
-            return $return;
-        }
-
-        return $result;
     }
 
     /**
      * Get a list of lists
      *
-     * @param bool $user
+     * @param bool   $user
      * @param string $alias
      * @param string $id
-     * @param bool $withLeads
-     * @param bool $withFilters
      *
      * @return array
      */
-    public function getLists($user = false, $alias = '', $id = '', $withLeads = false, $withFilters = false)
+    public function getLists($user = false, $alias = '', $id = '')
     {
         static $lists = array();
 
@@ -94,7 +67,7 @@ class LeadListRepository extends CommonRepository
             $user = $user->getId();
         }
 
-        $key = (int) $user . $alias . $id. (int) $withLeads;
+        $key = (int) $user.$alias.$id;
         if (isset($lists[$key])) {
             return $lists[$key];
         }
@@ -102,21 +75,12 @@ class LeadListRepository extends CommonRepository
         $q = $this->_em->createQueryBuilder()
             ->from('MauticLeadBundle:LeadList', 'l', 'l.id');
 
-        if ($withLeads) {
-            $q->select('partial l.{id, name, alias, filters}, partial il.{id}, partial el.{id}')
-                ->leftJoin('l.includedLeads', 'il')
-                ->leftJoin('l.excludedLeads', 'el');
-        } elseif ($withFilters) {
-            $q->select('partial l.{id, name, alias, filters}');
-        } else {
-            $q->select('partial l.{id, name, alias}');
-        }
-
-        $q->where($q->expr()->eq('l.isPublished', true));
+        $q->select('partial l.{id, name, alias}')
+            ->andWhere($q->expr()->eq('l.isPublished', ':true'))
+            ->setParameter('true', true, 'boolean');
 
         if (!empty($user)) {
-            $q->andWhere($q->expr()->eq('l.isGlobal', true));
-
+            $q->andWhere($q->expr()->eq('l.isGlobal', ':true'));
             $q->orWhere('l.createdBy = :user');
             $q->setParameter('user', $user);
         }
@@ -136,145 +100,165 @@ class LeadListRepository extends CommonRepository
 
         $results = $q->getQuery()->getArrayResult();
 
-        if ($withLeads) {
-            foreach ($results as &$i) {
-                $leadLists = $this->getLeadsByList($i, true);
-                $i['leads'] = $leadLists[$i['id']];
-            }
-        }
-
         $lists[$key] = $results;
+
         return $results;
     }
 
     /**
      * Get lists for a specific lead
      *
-     * @param      $lead
-     * @param bool $forList
+     * @param       $lead
+     * @param bool  $forList
+     * @param bool  $singleArrayHydration
      *
      * @return mixed
      */
-    public function getLeadLists($lead, $forList = false)
+    public function getLeadLists($lead, $forList = false, $singleArrayHydration = false)
     {
-        static $return = array();
-
         if (is_array($lead)) {
             $q = $this->_em->createQueryBuilder()
                 ->from('MauticLeadBundle:LeadList', 'l', 'l.id');
 
             if ($forList) {
-                $q->select('partial l.{id, alias, name}, partial il.{id}');
+                $q->select('partial l.{id, alias, name}, partial il.{lead, list, dateAdded, manuallyAdded, manuallyRemoved}');
             } else {
-                $q->select('l, partial il.{id}');
+                $q->select('l, partial lead.{id}');
             }
 
-            $q->leftJoin('l.includedLeads', 'il');
+            $q->leftJoin('l.leads', 'il')
+                ->leftJoin('il.lead', 'lead');
 
             $q->where(
-                $q->expr()->in('il.id', ':leads')
-            )->setParameter('leads', $lead);
+                $q->expr()->andX(
+                    $q->expr()->in('lead.id', ':leads'),
+                    $q->expr()->in('il.manuallyRemoved', ':false')
+                )
+            )
+                ->setParameter('leads', $lead)
+                ->setParameter('false', false, 'boolean');
 
             $result = $q->getQuery()->getArrayResult();
 
             $return = array();
             foreach ($result as $r) {
-                foreach($r['includedLeads'] as $l) {
-                    $return[$l['id']][$r['id']] = $r;
+                foreach ($r['leads'] as $l) {
+                    $return[$l['lead_id']][$r['id']] = $r;
                 }
             }
 
             return $return;
         } else {
-            if (empty($return[$lead])) {
-                $q = $this->_em->createQueryBuilder()
-                    ->from('MauticLeadBundle:LeadList', 'l', 'l.id');
+            $q = $this->_em->createQueryBuilder()
+                ->from('MauticLeadBundle:LeadList', 'l', 'l.id');
 
-                if ($forList) {
-                    $q->select('partial l.{id, alias, name}');
-                } else {
-                    $q->select('l');
-                }
-
-                $q->leftJoin('l.includedLeads', 'il');
-
-                $q->where(
-                    $q->expr()->eq('il.id', (int)$lead)
-                );
-
-                $return[$lead] = $q->getQuery()->getResult();
+            if ($forList) {
+                $q->select('partial l.{id, alias, name}, partial il.{lead, list, dateAdded, manuallyAdded, manuallyRemoved}');
+            } else {
+                $q->select('l');
             }
 
-            return $return[$lead];
+            $q->leftJoin('l.leads', 'il');
+
+            $q->where(
+                $q->expr()->andX(
+                    $q->expr()->eq('IDENTITY(il.lead)', (int) $lead),
+                    $q->expr()->in('il.manuallyRemoved', ':false')
+                )
+            )
+                ->setParameter('false', false, 'boolean');
+
+            return ($singleArrayHydration) ? $q->getQuery()->getArrayResult() : $q->getQuery()->getResult();
         }
     }
 
     /**
      * Return a list of global lists
      *
-     * @param bool $withLeads
-     * @param bool $withFilters
-     *
      * @return array
      */
-    public function getGlobalLists($withLeads = false, $withFilters = false)
+    public function getGlobalLists()
     {
         $q = $this->_em->createQueryBuilder()
             ->from('MauticLeadBundle:LeadList', 'l', 'l.id');
 
-        if ($withLeads) {
-            $q->select('partial l.{id, name, alias, filters}, partial il.{id}, partial el.{id}')
-                ->leftJoin('l.includedLeads', 'il')
-                ->leftJoin('l.excludedLeads', 'el');
-        } elseif ($withFilters) {
-            $q->select('partial l.{id, name, alias, filters}');
-        } else {
-            $q->select('partial l.{id, name, alias}');
-        }
-
-        $q->where($q->expr()->eq('l.isPublished', true));
-
-        $q->andWhere($q->expr()->eq('l.isGlobal', true));
-        $q->orderBy('l.name');
+        $q->select('partial l.{id, name, alias}')
+            ->where($q->expr()->eq('l.isPublished', 'true'))
+            ->setParameter(':true', true, 'boolean')
+            ->andWhere($q->expr()->eq('l.isGlobal', ':true'))
+            ->orderBy('l.name');
 
         $results = $q->getQuery()->getArrayResult();
-
-        if ($withLeads) {
-            foreach ($results as &$i) {
-                $leadLists = $this->getLeadsByList($i, true);
-                $i['leads'] = $leadLists[$i['id']];
-            }
-        }
 
         return $results;
     }
 
     /**
      * Get a count of leads that belong to the list
-     */
-    public function getLeadCount($listId)
-    {
-        $q = $this->_em->getConnection()->createQueryBuilder();
-
-        $q->select('count(*) as recipientCount')
-            ->from(MAUTIC_TABLE_PREFIX . 'lead_lists_included_leads', 'l')
-            ->where($q->expr()->eq('l.leadlist_id', (int) $listId));
-
-        $result = $q->execute()->fetchAll();
-
-        return (!empty($result[0])) ? $result[0]['recipientCount'] : 0;
-    }
-
-    /**
-     * @param      $lists
-     * @param bool $idOnly
-     * @param bool $dynamic
+     *
+     * @param $listIds
      *
      * @return array
      */
-    public function getLeadsByList($lists, $idOnly = false, $dynamic = false)
+    public function getLeadCount($listIds)
     {
-        static $leads = array(), $currentOnlyLeads = array();
+        $q = $this->_em->getConnection()->createQueryBuilder();
+
+        $q->select('count(l.lead_id) as thecount, l.leadlist_id')
+            ->from(MAUTIC_TABLE_PREFIX.'lead_lists_leads', 'l');
+
+        $returnArray = (is_array($listIds));
+
+        if (!$returnArray) {
+            $listIds = array($listIds);
+        }
+
+        $q->where(
+            $q->expr()->in('l.leadlist_id', $listIds),
+            $q->expr()->eq('l.manually_removed', ':false')
+        )
+            ->setParameter('false', false, 'boolean')
+            ->groupBy('l.leadlist_id');
+
+        $result = $q->execute()->fetchAll();
+
+        $return = array();
+        foreach ($result as $r) {
+            $return[$r['leadlist_id']] = $r['thecount'];
+        }
+
+        // Ensure lists without leads have a value
+        foreach ($listIds as $l) {
+            if (!isset($return[$l])) {
+                $return[$l] = 0;
+            }
+        }
+
+        return ($returnArray) ? $return : $return[$listIds[0]];
+    }
+
+    /**
+     * @param       $lists
+     * @param array $args
+     *
+     * @return array
+     */
+    public function getLeadsByList($lists, $args = array())
+    {
+        // Return only IDs
+        $idOnly = (!array_key_exists('idOnly', $args)) ? false : $args['idOnly'];
+        // Return counts
+        $countOnly = (!array_key_exists('countOnly', $args)) ? false : $args['countOnly'];
+        // Return only leads that have not been added or manually manipulated to the lists yet
+        $newOnly = (!array_key_exists('newOnly', $args)) ? false : $args['newOnly'];
+        // Return leads that do not belong to a list based on filters
+        $nonMembersOnly = (!array_key_exists('nonMembersOnly', $args)) ? false : $args['nonMembersOnly'];
+        // Use filters to dynamically generate the list
+        $dynamic = ($newOnly || $nonMembersOnly);
+        // Limiters
+        $batchLimiters = (!array_key_exists('batchLimiters', $args)) ? false : $args['batchLimiters'];
+        $start         = (!array_key_exists('start', $args)) ? false : $args['start'];
+        $limit         = (!array_key_exists('limit', $args)) ? false : $args['limit'];
 
         if (!$lists instanceof PersistentCollection && !is_array($lists) || isset($lists['id'])) {
             $lists = array($lists);
@@ -282,6 +266,7 @@ class LeadListRepository extends CommonRepository
 
         $return = array();
         foreach ($lists as $l) {
+            $leads = ($countOnly) ? 0 : array();
 
             if ($l instanceof LeadList) {
                 $id      = $l->getId();
@@ -294,183 +279,635 @@ class LeadListRepository extends CommonRepository
                 $filters = array();
             }
 
-            if (!$dynamic) {
-                if (!isset($currentOnlyLeads[$id])) {
-                    $q = $this->_em->getConnection()->createQueryBuilder();
-                    if ($idOnly) {
-                        $q->select('ll.lead_id')
-                            ->from(MAUTIC_TABLE_PREFIX . 'lead_lists_included_leads', 'll');
-                    } else {
-                        $q->select('l.*')
-                            ->from(MAUTIC_TABLE_PREFIX . 'leads', 'l')
-                            ->join('l', MAUTIC_TABLE_PREFIX . 'lead_lists_included_leads', 'll', 'l.id = ll.lead_id');
-                    }
+            if ($dynamic && count($filters)) {
+                $q          = $this->getEntityManager()->getConnection()->createQueryBuilder();
+                $parameters = array();
+                $expr       = $this->getListFilterExpr($filters, $parameters, $q, false);
+                foreach ($parameters as $k => $v) {
+                    switch (true) {
+                        case is_bool($v):
+                            $paramType = 'boolean';
+                            break;
 
-                    $q ->where($q->expr()->eq('ll.leadlist_id', ':list'))
-                        ->setParameter('list', $id);
-                    $results    = $q->execute()->fetchAll();
-                    $currentOnlyLeads[$id] = array();
-                    foreach ($results as $r) {
-                        if ($idOnly) {
-                            $currentOnlyLeads[$id][] = $r['lead_id'];
-                        } else {
-                            $currentOnlyLeads[$id][$r['id']] = $r;
-                        }
-                    }
+                        case is_int($v):
+                            $paramType = 'integer';
+                            break;
 
-                    unset($filters, $parameters, $q, $expr);
+                        case is_float($v):
+                            $paramType = 'float';
+                            break;
+
+                        default:
+                            $paramType = null;
+                            break;
+                    }
+                    $q->setParameter($k, $v, $paramType);
                 }
-                $return[$id] = $currentOnlyLeads[$id];
 
-            } else {
-                if (!isset($leads[$id]) && $filters) {
-                    $q          = $this->_em->getConnection()->createQueryBuilder();
-                    $parameters = array();
-                    $expr       = $this->getListFilterExpr($filters, $parameters, $q, false, $l);
-
-                    $select = ($idOnly) ? 'l.id' : 'l.*';
-                    $q->select($select)
-                        ->from(MAUTIC_TABLE_PREFIX . 'leads', 'l')
-                        ->where($expr);
-                    foreach ($parameters as $k => $v) {
-                        $q->setParameter($k, $v);
-                    }
-
-                    $results    = $q->execute()->fetchAll();
-
-                    $leads[$id] = array();
-                    foreach ($results as $r) {
-                        if ($idOnly) {
-                            $leads[$id][] = $r['id'];
-                        } else {
-                            $leads[$id][$r['id']] = $r;
-                        }
-
-                    }
-                    unset($filters, $parameters, $q, $expr);
+                if ($countOnly) {
+                    $select = 'count(l.id) as lead_count, max(l.id) as max_id';
+                } elseif ($idOnly) {
+                    $select = 'l.id';
                 } else {
-                    $leads[$id] = array();
+                    $select = 'l.*';
                 }
-                $return[$id] = $leads[$id];
+
+                $q->select($select)
+                    ->from(MAUTIC_TABLE_PREFIX.'leads', 'l');
+
+                // Only leads that existed at the time of count
+                if ($batchLimiters && !empty($batchLimiters['maxId'])) {
+                    $expr->add(
+                        $q->expr()->lte('l.id', $batchLimiters['maxId'])
+                    );
+                }
+
+                if ($newOnly) {
+                    // Leads that do not have any record in the lead_lists_leads table for this lead list
+                    $subqb = $this->_em->getConnection()->createQueryBuilder()
+                        ->select('null')
+                        ->from(MAUTIC_TABLE_PREFIX.'lead_lists_leads', 'll')
+                        ->where(
+                            $q->expr()->andX(
+                                $q->expr()->eq('ll.leadlist_id', $id),
+                                $q->expr()->eq('ll.lead_id', 'l.id')
+                            )
+                        );
+
+                    $expr->add(
+                        sprintf('NOT EXISTS (%s)', $subqb->getSQL())
+                    );
+
+                    $q->andWhere($expr);
+                } elseif ($nonMembersOnly) {
+                    // Only leads that are part of the list that no longer match filters and have not been manually removed
+                    $q->join('l', MAUTIC_TABLE_PREFIX.'lead_lists_leads', 'll', 'l.id = ll.lead_id');
+
+                    $mainExpr = $q->expr()->andX();
+                    if ($batchLimiters && !empty($batchLimiters['dateTime'])) {
+                        // Only leads in the list at the time of count
+                        $mainExpr->add(
+                            $q->expr()->lte('ll.date_added', $q->expr()->literal($batchLimiters['dateTime']))
+                        );
+                    }
+
+                    // Ignore those that have been manually added
+                    $mainExpr->addMultiple(
+                        array(
+                            $q->expr()->eq('ll.manually_added', ':false'),
+                            $q->expr()->eq('ll.leadlist_id', (int) $id)
+                        )
+                    );
+                    $q->setParameter('false', false, 'boolean');
+
+                    // Use an exists statement for better performance?? - https://dev.mysql.com/doc/refman/5.5/en/-existssubquery-optimization-with.html
+                    $sq = $this->getEntityManager()->getConnection()->createQueryBuilder();
+                    $sq->select('null')
+                        ->from(MAUTIC_TABLE_PREFIX.'leads', 'l')
+                        ->where('l.id = ll.lead_id')
+                        ->andWhere($expr);
+
+                    $q->andWhere(
+                        sprintf('NOT EXISTS (%s)', $sq->getSQL())
+                    )
+                        ->andWhere($mainExpr);
+                }
+
+                // Set limits if applied
+                if (!empty($limit)) {
+                    $q->setFirstResult($start)
+                        ->setMaxResults($limit);
+                }
+
+                $results = $q->execute()->fetchAll();
+                foreach ($results as $r) {
+                    if ($countOnly) {
+                        $leads = array(
+                            'count' => $r['lead_count'],
+                            'maxId' => $r['max_id']
+                        );
+                    } elseif ($idOnly) {
+                        $leads[$r['id']] = $r['id'];
+                    } else {
+                        $leads[$r['id']] = $r;
+                    }
+                }
+            } elseif (!$dynamic) {
+                $q = $this->_em->getConnection()->createQueryBuilder();
+                if ($countOnly) {
+                    $q->select('max(ll.lead_id) as max_id, count(ll.lead_id) as lead_count')
+                        ->from(MAUTIC_TABLE_PREFIX.'lead_lists_leads', 'll');
+                } elseif ($idOnly) {
+                    $q->select('ll.lead_id as id')
+                        ->from(MAUTIC_TABLE_PREFIX.'lead_lists_leads', 'll');
+                } else {
+                    $q->select('l.*')
+                        ->from(MAUTIC_TABLE_PREFIX.'leads', 'l')
+                        ->join('l', MAUTIC_TABLE_PREFIX.'lead_lists_leads', 'll', 'l.id = ll.lead_id');
+                }
+
+                // Filter by list
+                $expr = $q->expr()->andX(
+                    $q->expr()->eq('ll.leadlist_id', ':list'),
+                    $q->expr()->eq('ll.manually_removed', ':false')
+                );
+
+                $q->setParameter('list', (int) $id)
+                    ->setParameter('false', false, 'boolean');
+
+                // Set limits if applied
+                if (!empty($limit)) {
+                    $q->setFirstResult($start)
+                        ->setMaxResults($limit);
+                }
+
+                $q->where($expr);
+
+                $results = $q->execute()->fetchAll();
+
+                foreach ($results as $r) {
+                    if ($countOnly) {
+                        $leads = array(
+                            'count' => $r['lead_count'],
+                            'maxId' => $r['max_id']
+                        );
+                    } elseif ($idOnly) {
+                        $leads[] = $r['id'];
+                    } else {
+                        $leads[] = $r;
+                    }
+                }
             }
+
+            $return[$id] = $leads;
+
+            unset($filters, $parameters, $q, $expr, $results, $dynamicExpr, $leads);
         }
+
         return $return;
     }
 
     /**
-     * @param      $filters
-     * @param      $parameters
-     * @param      $q
-     * @param bool $not
+     * @param                                   $filters
+     * @param                                   $parameters
+     * @param \Doctrine\DBAL\Query\QueryBuilder $q
+     * @param bool|false                        $not
+     * @param null|int                          $leadId
      *
-     * @return mixed
+     * @return \Doctrine\DBAL\Query\Expression\CompositeExpression
      */
-    public function getListFilterExpr($filters, &$parameters, &$q, $not = false, $list = null)
+    public function getListFilterExpr($filters, &$parameters, QueryBuilder $q, $not = false, $leadId = null)
     {
-        $group       = false;
-        $options     = $this->getFilterExpressionFunctions();
-        $expr        = $q->expr()->orX();
-        $useExpr     =& $expr;
+        static $leadTable;
+
+        if (!count($filters)) {
+
+            return $q->expr()->andX();
+        }
+
+        // Get table columns
+        if (null === $leadTable) {
+            $schema = $this->_em->getConnection()->getSchemaManager();
+            /** @var \Doctrine\DBAL\Schema\Column[] $leadTable */
+            $leadTable = $schema->listTableColumns(MAUTIC_TABLE_PREFIX.'leads');
+        }
+
+        $options   = $this->getFilterExpressionFunctions();
+        $groups    = array();
+        $groupExpr = $q->expr()->andX();
 
         foreach ($filters as $k => $details) {
-            $uniqueFilter              = $this->generateRandomParameterName();
-            $parameters[$uniqueFilter] = $details['filter'];
+            $column = isset($leadTable[$details['field']]) ? $leadTable[$details['field']] : false;
 
-            $uniqueFilter              = ":$uniqueFilter";
-            //DQL does not have a not() function so we have to use the opposite
-            $func                      = (!$not) ? $options[$details['operator']]['func'] :
-                $options[$details['operator']]['oFunc'];
-            $field                     = "l.{$details['field']}";
+            //DBAL does not have a not() function so we have to use the opposite
+            $func  = (!$not)
+                ? $options[$details['operator']]['expr']
+                :
+                $options[$details['operator']]['negate_expr'];
+            $field = "l.{$details['field']}";
+
+            // Format the field based on platform specific functions that DBAL doesn't support natively
+            if ($column) {
+                $formatter  = AbstractFormatter::createFormatter($this->_em->getConnection());
+                $columnType = $column->getType();
+
+                switch ($details['type']) {
+                    case 'datetime':
+                        if (!$columnType instanceof UTCDateTimeType) {
+                            $field = $formatter->toDateTime($field);
+                        }
+                        break;
+                    case 'date':
+                        if (!$columnType instanceof DateType && !$columnType instanceof UTCDateTimeType) {
+                            $field = $formatter->toDate($field);
+                        }
+                        break;
+                    case 'time':
+                        if (!$columnType instanceof TimeType && !$columnType instanceof UTCDateTimeType) {
+                            $field = $formatter->toTime($field);
+                        }
+                        break;
+                    case 'number':
+                        if (!$columnType instanceof IntegerType && !$columnType instanceof FloatType) {
+                            $field = $formatter->toNumeric($field);
+                        }
+                        break;
+                }
+            }
 
             //the next one will determine the group
             $glue = (isset($filters[$k + 1])) ? $filters[$k + 1]['glue'] : $details['glue'];
 
             if ($glue == "or" || $details['glue'] == 'or') {
-                //create the group if it doesn't exist
-                if ($group === false) {
-                    $group = $q->expr()->orX();
+                // Create a new group of andX expressions
+                if ($groupExpr->count()) {
+                    $groups[]  = $groupExpr;
+                    $groupExpr = $q->expr()->andX();
+                }
+            }
+
+            $parameter        = $this->generateRandomParameterName();
+            $exprParameter    = ":$parameter";
+            $ignoreAutoFilter = false;
+
+            // Special handling of relative date strings
+            if ($details['type'] == 'datetime' || $details['type'] == 'date') {
+                $relativeDateStrings = $this->getRelativeDateStrings();
+                // Check if the column type is a date/time stamp
+                $isTimestamp = ($columnType instanceof UTCDateTimeType || $details['type'] == 'datetime');
+                $getDate     = function (&$string) use ($isTimestamp, $relativeDateStrings, &$details, &$func, $not) {
+                    $key             = array_search($string, $relativeDateStrings);
+                    $dtHelper        = new DateTimeHelper('midnight today', null, 'local');
+                    $requiresBetween = (in_array($func, array('eq', 'neq')) && $isTimestamp);
+
+                    $timeframe  = str_replace('mautic.lead.list.', '', $key);
+                    $modifier   = false;
+                    $isRelative = true;
+
+                    switch ($timeframe) {
+                        case 'today':
+                        case 'tomorrow':
+                        case 'yesterday':
+                            if ($timeframe == 'yesterday') {
+                                $dtHelper->modify('-1 day');
+                            } elseif ($timeframe == 'tomorrow') {
+                                $dtHelper->modify('+1 day');
+                            }
+
+                            // Today = 2015-08-28 00:00:00
+                            if ($requiresBetween) {
+                                // eq:
+                                //  field >= 2015-08-28 00:00:00
+                                //  field < 2015-08-29 00:00:00
+
+                                // neq:
+                                // field < 2015-08-28 00:00:00
+                                // field >= 2015-08-29 00:00:00
+                                $modifier = '+1 day';
+                            } else {
+                                // lt:
+                                //  field < 2015-08-28 00:00:00
+                                // gt:
+                                //  field > 2015-08-28 23:59:59
+
+                                // lte:
+                                //  field <= 2015-08-28 23:59:59
+                                // gte:
+                                //  field >= 2015-08-28 00:00:00
+                                if (in_array($func, array('gt', 'lte'))) {
+                                    $modifier = '+1 day -1 second';
+                                }
+                            }
+                            break;
+                        case 'week_last':
+                        case 'week_next':
+                        case 'week_this':
+                            $interval = str_replace('week_', '', $timeframe);
+                            $dtHelper->setDateTime('midnight monday '.$interval.' week', null);
+
+                            // This week: Monday 2015-08-24 00:00:00
+                            if ($requiresBetween) {
+                                // eq:
+                                //  field >= Mon 2015-08-24 00:00:00
+                                //  field <  Mon 2015-08-31 00:00:00
+
+                                // neq:
+                                // field <  Mon 2015-08-24 00:00:00
+                                // field >= Mon 2015-08-31 00:00:00
+                                $modifier = '+1 week';
+                            } else {
+                                // lt:
+                                //  field < Mon 2015-08-24 00:00:00
+                                // gt:
+                                //  field > Sun 2015-08-30 23:59:59
+
+                                // lte:
+                                //  field <= Sun 2015-08-30 23:59:59
+                                // gte:
+                                //  field >= Mon 2015-08-24 00:00:00
+                                if (in_array($func, array('gt', 'lte'))) {
+                                    $modifier = '+1 week -1 second';
+                                }
+                            }
+                            break;
+
+                        case 'month_last':
+                        case 'month_next':
+                        case 'month_this':
+                            $interval = substr($key, -4);
+                            $dtHelper->setDateTime('midnight first day of '.$interval.' month', null);
+
+                            // This month: 2015-08-01 00:00:00
+                            if ($requiresBetween) {
+                                // eq:
+                                //  field >= 2015-08-01 00:00:00
+                                //  field <  2015-09:01 00:00:00
+
+                                // neq:
+                                // field <  2015-08-01 00:00:00
+                                // field >= 2016-09-01 00:00:00
+                                $modifier = '+1 month';
+                            } else {
+                                // lt:
+                                //  field < 2015-08-01 00:00:00
+                                // gt:
+                                //  field > 2015-08-31 23:59:59
+
+                                // lte:
+                                //  field <= 2015-08-31 23:59:59
+                                // gte:
+                                //  field >= 2015-08-01 00:00:00
+                                if (in_array($func, array('gt', 'lte'))) {
+                                    $modifier = '+1 month -1 second';
+                                }
+                            }
+                            break;
+                        case 'year_last':
+                        case 'year_next':
+                        case 'year_this':
+                            $interval = substr($key, -4);
+                            $dtHelper->setDateTime('midnight first day of '.$interval.' year', null);
+
+                            // This year: 2015-01-01 00:00:00
+                            if ($requiresBetween) {
+                                // eq:
+                                //  field >= 2015-01-01 00:00:00
+                                //  field <  2016-01-01 00:00:00
+
+                                // neq:
+                                // field <  2015-01-01 00:00:00
+                                // field >= 2016-01-01 00:00:00
+                                $modifier = '+1 year';
+                            } else {
+                                // lt:
+                                //  field < 2015-01-01 00:00:00
+                                // gt:
+                                //  field > 2015-12-31 23:59:59
+
+                                // lte:
+                                //  field <= 2015-12-31 23:59:59
+                                // gte:
+                                //  field >= 2015-01-01 00:00:00
+                                if (in_array($func, array('gt', 'lte'))) {
+                                    $modifier = '+1 year -1 second';
+                                }
+                            }
+                            break;
+                        default:
+                            $isRelative = false;
+                            break;
+                    }
+
+                    if ($isRelative) {
+                        if ($requiresBetween) {
+                            $startWith = ($isTimestamp) ? $dtHelper->toUtcString('Y-m-d H:i:s') : $dtHelper->toUtcString('Y-m-d');
+
+                            $dtHelper->modify($modifier);
+                            $endWith = ($isTimestamp) ? $dtHelper->toUtcString('Y-m-d H:i:s') : $dtHelper->toUtcString('Y-m-d');
+
+                            // Use a between statement
+                            $func              = ($func == 'neq') ? 'notBetween' : 'between';
+                            $details['filter'] = array($startWith, $endWith);
+                        } else {
+                            if ($modifier) {
+                                $dtHelper->modify($modifier);
+                            }
+
+                            $details['filter'] = ($isTimestamp) ? $dtHelper->toUtcString('Y-m-d H:i:s') : $dtHelper->toUtcString('Y-m-d');
+                        }
+                    }
+                };
+
+                if (is_array($details['filter'])) {
+                    foreach ($details['filter'] as &$filterValue) {
+                        $getDate($filterValue);
+                    }
+                } else {
+                    $getDate($details['filter']);
+                }
+            }
+
+            // Generate a unique alias
+            $alias = $this->generateRandomParameterName();
+
+            switch ($details['field']) {
+                case 'dnc_bounced':
+                case 'dnc_unsubscribed':
+                    // Special handling of do not email
+
+                    $column = str_replace('dnc_', '', $details['field']);
+
+                    $func = (($func == 'eq' && $details['filter']) || ($func == 'neq' && !$details['filter'])) ? 'EXISTS' : 'NOT EXISTS';
+
+                    $subqb = $this->_em->getConnection()->createQueryBuilder()
+                        ->select('null')
+                        ->from(MAUTIC_TABLE_PREFIX.'email_donotemail', $alias)
+                        ->where(
+                            $q->expr()->andX(
+                                $q->expr()->eq($alias.'.'.$column, $exprParameter),
+                                $q->expr()->eq($alias.'.lead_id', 'l.id')
+                            )
+                        );
+
+                    // Specific lead
+                    if (!empty($leadId)) {
+                        $subqb->andWhere(
+                            $subqb->expr()->eq($alias.'.lead_id', $leadId)
+                        );
+                    }
+
+                    $groupExpr->add(
+                        sprintf('%s (%s)', $func, $subqb->getSQL())
+                    );
+
+                    // Filter will always be true and differentiated via EXISTS/NOT EXISTS
+                    $details['filter'] = true;
+
+                    break;
+
+                case 'leadlist':
+                case 'tags':
+                    // Special handling of lead lists and tags
+                    $func  = in_array($func, array('eq', 'in')) ? 'EXISTS' : 'NOT EXISTS';
+
+                    if ($details['field'] == 'leadlist') {
+                        $table  = 'lead_lists_leads';
+                        $column = 'leadlist_id';
+                    } else {
+                        $table  = 'lead_tags_xref';
+                        $column = 'tag_id';
+                    }
+
+                    // DBAL requires an array for in()
+                    $ignoreAutoFilter = true;
+                    foreach ($details['filter'] as &$value) {
+                        $value = (int) $value;
+                    }
+
+                    $subExpr = $q->expr()->andX(
+                        $q->expr()->in(sprintf('%s.%s', $alias, $column), $details['filter']),
+                        $q->expr()->eq($alias.'.lead_id', 'l.id')
+                    );
+
+                    $subqb = $this->_em->getConnection()->createQueryBuilder()
+                        ->select('null')
+                        ->from(MAUTIC_TABLE_PREFIX.$table, $alias);
+
+                    // Specific lead
+                    if (!empty($leadId)) {
+                        $subExpr->add(
+                            $subqb->expr()->eq($alias.'.lead_id', $leadId)
+                        );
+                    }
+
+                    if ($table == 'lead_lists_leads') {
+                        $falseParameter = $this->generateRandomParameterName();
+                        $subExpr->add(
+                            $subqb->expr()->eq($alias.'.manually_removed', ":$falseParameter")
+                        );
+                        $parameters[$falseParameter] = false;
+                    }
+
+                    $subqb->where($subExpr);
+
+                    $groupExpr->add(
+                        sprintf('%s (%s)', $func, $subqb->getSQL())
+                    );
+
+                    break;
+                default:
+                    switch ($func) {
+                        case 'in':
+                        case 'notIn':
+                            foreach ($details['filter'] as &$value) {
+                                $value = $q->expr()->literal(
+                                    InputHelper::clean($value)
+                                );
+                            }
+                            $groupExpr->add(
+                                $q->expr()->$func($field, $details['filter'])
+                            );
+
+                            $ignoreAutoFilter = true;
+
+                            break;
+                        case 'between':
+                        case 'notBetween':
+                            // Filter should be saved with double || to separate options
+                            $parameter2              = $this->generateRandomParameterName();
+                            $parameters[$parameter]  = $details['filter'][0];
+                            $parameters[$parameter2] = $details['filter'][1];
+                            $exprParameter2          = ":$parameter2";
+                            $ignoreAutoFilter        = true;
+
+                            if ($func == 'between') {
+                                $groupExpr->add(
+                                    $q->expr()->andX(
+                                        $q->expr()->gte($field, $exprParameter),
+                                        $q->expr()->lt($field, $exprParameter2)
+                                    )
+                                );
+                            } else {
+                                $groupExpr->add(
+                                    $q->expr()->andX(
+                                        $q->expr()->lt($field, $exprParameter),
+                                        $q->expr()->gte($field, $exprParameter2)
+                                    )
+                                );
+                            }
+
+                            break;
+                        case 'notEmpty':
+                            $groupExpr->add(
+                                $q->expr()->andX(
+                                    $q->expr()->isNotNull($field),
+                                    $q->expr()->neq($field, $q->expr()->literal(''))
+                                )
+                            );
+
+                            break;
+                        case 'empty':
+                            $groupExpr->add(
+                                $q->expr()->orX(
+                                    $q->expr()->isNull($field),
+                                    $q->expr()->eq($field, $q->expr()->literal(''))
+                                )
+                            );
+
+                            break;
+                        case 'neq':
+                            $groupExpr->add(
+                                $q->expr()->orX(
+                                    $q->expr()->isNull($field),
+                                    $q->expr()->neq($field, $exprParameter)
+                                )
+                            );
+
+                            break;
+                        case 'like':
+                        case 'notLike':
+                            if (strpos($details['filter'], '%') === false) {
+                                $details['filter'] = '%'.$details['filter'].'%';
+                            }
+                        default:
+                            $groupExpr->add($q->expr()->$func($field, $exprParameter));
+                            break;
+                    }
+            }
+
+            if (!$ignoreAutoFilter) {
+                if (!is_array($details['filter'])) {
+                    switch ($details['type']) {
+                        case 'number':
+                            $details['filter'] = (float) $details['filter'];
+                            break;
+
+                        case 'boolean':
+                            $details['filter'] = (bool) $details['filter'];
+                            break;
+                    }
                 }
 
-                //set expression var to the grouped one
-                unset($useExpr);
-                $useExpr =& $group;
-            } else {
-                if ($group !== false) {
-                    //add the group
-                    $expr->add($group);
-                    //reset the group
-                    $group = false;
-                }
-
-                //reset the expression var to be used
-                unset($useExpr);
-                $useExpr =& $expr;
-            }
-            if ($func == 'notEmpty') {
-                $useExpr->add(
-                    $q->expr()->andX(
-                        $q->expr()->isNotNull($field, $uniqueFilter),
-                        $q->expr()->neq($field, $q->expr()->literal(''))
-                    )
-                );
-            } elseif ($func == 'empty') {
-                $useExpr->add(
-                    $q->expr()->orX(
-                        $q->expr()->isNull($field, $uniqueFilter),
-                        $q->expr()->eq($field, $q->expr()->literal(''))
-                    )
-                );
-            } else {
-                $useExpr->add($q->expr()->$func($field, $uniqueFilter));
+                $parameters[$parameter] = $details['filter'];
             }
         }
-        if ($group !== false) {
-            //add the group if not added yet
-            $expr->add($group);
+
+        // Get the last of the filters
+        if ($groupExpr->count()) {
+            $groups[] = $groupExpr;
         }
 
-        /*
-        //add manually added leads
-        if ($list !== null) {
-            if ($list instanceof LeadList) {
-                $includedLeads = $list->getIncludedLeads();
-                $excludedLeads = $list->getExcludedLeads();
-            } else {
-                $includedLeads = $list['includedLeads'];
-                $excludedLeads = $list['excludedLeads'];
-            }
+        if (count($groups) === 1) {
+            // Only one andX expression
+            $expr = $groups[0];
+        } else {
+            // Sets of expressions grouped by OR
+            $orX = $q->expr()->orX();
+            $orX->addMultiple($groups);
 
-            $includeIds  = array();
-            foreach ($includedLeads as $lead) {
-                $includeIds[] = ($lead instanceof Lead) ? $lead->getId() : $lead['id'];
-            }
-
-            $excludeIds    = array();
-            foreach ($excludedLeads as $lead) {
-                $excludeIds[] = ($lead instanceof Lead) ? $lead->getId() : $lead['id'];
-            }
-
-            $manualExpr = $q->expr()->andX();
-            if (!empty($includeIds)) {
-                $manualExpr->add(
-                    $q->expr()->in('l.id', $includeIds)
-                );
-            }
-
-            if (!empty($excludeIds)) {
-                $manualExpr->add(
-                    $q->expr()->notIn('l.id', $excludeIds)
-                );
-            }
-
-            if ($manualExpr->count()) {
-                $returnExpr = $q->expr()->orX();
-                $returnExpr->add($expr);
-                $returnExpr->add($manualExpr);
-                return $returnExpr;
-            }
+            // Wrap in a andX for other functions to append
+            $expr = $q->expr()->andX($orX);
         }
-        */
 
         return $expr;
     }
@@ -483,88 +920,118 @@ class LeadListRepository extends CommonRepository
     public function getFilterExpressionFunctions($operator = null)
     {
         $operatorOptions = array(
-            '='      =>
+            '='        =>
                 array(
-                    'label' => 'mautic.lead.list.form.operator.equals',
-                    'func'  => 'eq',
-                    'oFunc' => 'neq'
+                    'label'       => 'mautic.lead.list.form.operator.equals',
+                    'expr'        => 'eq',
+                    'negate_expr' => 'neq'
                 ),
-            '!='     =>
+            '!='       =>
                 array(
-                    'label' => 'mautic.lead.list.form.operator.notequals',
-                    'func'  => 'neq',
-                    'oFunc' => 'eq'
+                    'label'       => 'mautic.lead.list.form.operator.notequals',
+                    'expr'        => 'neq',
+                    'negate_expr' => 'eq'
                 ),
-            '&#62;'   =>
+            'gt'       =>
                 array(
-                    'label' => 'mautic.lead.list.form.operator.greaterthan',
-                    'func'  => 'gt',
-                    'oFunc' => 'lt'
+                    'label'       => 'mautic.lead.list.form.operator.greaterthan',
+                    'expr'        => 'gt',
+                    'negate_expr' => 'lt'
                 ),
-            '&#62;='   =>
+            'gte'      =>
                 array(
-                    'label' => 'mautic.lead.list.form.operator.greaterthanequals',
-                    'func'  => 'gte',
-                    'oFunc' => 'lt'
+                    'label'       => 'mautic.lead.list.form.operator.greaterthanequals',
+                    'expr'        => 'gte',
+                    'negate_expr' => 'lt'
                 ),
-            '&#60;'    =>
+            'lt'       =>
                 array(
-                    'label' => 'mautic.lead.list.form.operator.lessthan',
-                    'func'  => 'lt',
-                    'oFunc' => 'gt'
+                    'label'       => 'mautic.lead.list.form.operator.lessthan',
+                    'expr'        => 'lt',
+                    'negate_expr' => 'gt'
                 ),
-            '&#60;='   =>
+            'lte'      =>
                 array(
-                    'label' => 'mautic.lead.list.form.operator.lessthanequals',
-                    'func'  => 'lte',
-                    'oFunc' => 'gt'
+                    'label'       => 'mautic.lead.list.form.operator.lessthanequals',
+                    'expr'        => 'lte',
+                    'negate_expr' => 'gt'
                 ),
-            'empty'  =>
+            'empty'    =>
                 array(
-                    'label' => 'mautic.lead.list.form.operator.isempty',
-                    'func'  => 'empty', //special case
-                    'oFunc' => 'notEmpty'
+                    'label'       => 'mautic.lead.list.form.operator.isempty',
+                    'expr'        => 'empty', //special case
+                    'negate_expr' => 'notEmpty'
                 ),
-            '!empty' =>
+            '!empty'   =>
                 array(
-                    'label' => 'mautic.lead.list.form.operator.isnotempty',
-                    'func'  => 'notEmpty', //special case
-                    'oFunc' => 'empty'
+                    'label'       => 'mautic.lead.list.form.operator.isnotempty',
+                    'expr'        => 'notEmpty', //special case
+                    'negate_expr' => 'empty'
                 ),
-            'like'   =>
+            'like'     =>
                 array(
-                    'label' => 'mautic.lead.list.form.operator.islike',
-                    'func'  => 'like',
-                    'oFunc' => 'notLike'
+                    'label'       => 'mautic.lead.list.form.operator.islike',
+                    'expr'        => 'like',
+                    'negate_expr' => 'notLike'
                 ),
-            '!like'  =>
+            '!like'    =>
                 array(
-                    'label' => 'mautic.lead.list.form.operator.isnotlike',
-                    'func'  => 'notLike',
-                    'oFunc' => 'like'
-                )
+                    'label'       => 'mautic.lead.list.form.operator.isnotlike',
+                    'expr'        => 'notLike',
+                    'negate_expr' => 'like'
+                ),
+            'between'  =>
+                array(
+                    'label'       => 'mautic.lead.list.form.operator.between',
+                    'expr'        => 'between', //special case
+                    'negate_expr' => 'notBetween',
+                    // @todo implement in list UI
+                    'hide'        => true
+                ),
+            '!between' =>
+                array(
+                    'label'       => 'mautic.lead.list.form.operator.notbetween',
+                    'expr'        => 'notBetween', //special case
+                    'negate_expr' => 'between',
+                    // @todo implement in list UI
+                    'hide'        => true
+                ),
+            'in'       =>
+                array(
+                    'label'       => 'mautic.lead.list.form.operator.in',
+                    'expr'        => 'in',
+                    'negate_expr' => 'notIn'
+                ),
+            '!in'      =>
+                array(
+                    'label'       => 'mautic.lead.list.form.operator.notin',
+                    'expr'        => 'notIn',
+                    'negate_expr' => 'in'
+                ),
         );
 
         return ($operator === null) ? $operatorOptions : $operatorOptions[$operator];
     }
 
     /**
-     * @param QueryBuilder $q
-     * @param              $filter
+     * @param \Doctrine\DBAL\Query\QueryBuilder|\Doctrine\ORM\QueryBuilder $q
+     * @param                                                              $filter
+     *
      * @return array
      */
     protected function addCatchAllWhereClause(&$q, $filter)
     {
-        $unique  = $this->generateRandomParameterName(); //ensure that the string has a unique parameter identifier
-        $string  = ($filter->strict) ? $filter->string : "%{$filter->string}%";
+        $unique = $this->generateRandomParameterName(); //ensure that the string has a unique parameter identifier
+        $string = ($filter->strict) ? $filter->string : "%{$filter->string}%";
 
         $expr = $q->expr()->orX(
-            $q->expr()->like('l.name',  ':'.$unique),
+            $q->expr()->like('l.name', ':'.$unique),
             $q->expr()->like('l.alias', ':'.$unique)
         );
         if ($filter->not) {
             $expr = $q->expr()->not($expr);
         }
+
         return array(
             $expr,
             array("$unique" => $string)
@@ -572,48 +1039,51 @@ class LeadListRepository extends CommonRepository
     }
 
     /**
-     * @param QueryBuilder $q
-     * @param              $filter
+     * @param \Doctrine\DBAL\Query\QueryBuilder|\Doctrine\ORM\QueryBuilder $q
+     * @param                                                              $filter
+     *
      * @return array
      */
     protected function addSearchCommandWhereClause(&$q, $filter)
     {
         $command         = $filter->command;
-        $string          = $filter->string;
         $unique          = $this->generateRandomParameterName();
         $returnParameter = true; //returning a parameter that is not used will lead to a Doctrine error
         $expr            = false;
 
         switch ($command) {
-            case $this->translator->trans('mautic.core.searchcommand.is'):
-                switch($string) {
-                    case $this->translator->trans('mautic.core.searchcommand.ismine'):
-                        $expr = $q->expr()->eq("l.createdBy", $this->currentUser->getId());
-                        break;
-                    case $this->translator->trans('mautic.lead.list.searchcommand.isglobal'):
-                        $expr = $q->expr()->eq("l.isGlobal", 1);
-                        break;
-                    case $this->translator->trans('mautic.core.searchcommand.ispublished'):
-                        $expr = $q->expr()->eq("l.isPublished", 1);
-                        break;
-                    case $this->translator->trans('mautic.core.searchcommand.isunpublished'):
-                        $expr = $q->expr()->eq("l.isPublished", 0);
-                        break;
-                }
+            case $this->translator->trans('mautic.core.searchcommand.ismine'):
+                $expr            = $q->expr()->eq("l.createdBy", $this->currentUser->getId());
                 $returnParameter = false;
+                break;
+            case $this->translator->trans('mautic.lead.list.searchcommand.isglobal'):
+                $expr            = $q->expr()->eq("l.isGlobal", ":$unique");
+                $forceParameters = array($unique => true);
+                break;
+            case $this->translator->trans('mautic.core.searchcommand.ispublished'):
+                $expr            = $q->expr()->eq("l.isPublished", ":$unique");
+                $forceParameters = array($unique => true);
+                break;
+            case $this->translator->trans('mautic.core.searchcommand.isunpublished'):
+                $expr            = $q->expr()->eq("l.isPublished", ":$unique");
+                $forceParameters = array($unique => false);
                 break;
             case $this->translator->trans('mautic.core.searchcommand.name'):
                 $expr = $q->expr()->like('l.name', ':'.$unique);
                 break;
         }
 
-        $string  = ($filter->strict) ? $filter->string : "%{$filter->string}%";
-        if ($expr && $filter->not) {
-            $expr = $q->expr()->not($expr);
+        $parameters = array();
+        if (!empty($forceParameters)) {
+            $parameters = $forceParameters;
+        } elseif ($returnParameter) {
+            $string     = ($filter->strict) ? $filter->string : "%{$filter->string}%";
+            $parameters = array("$unique" => $string);
         }
+
         return array(
             $expr,
-            ($returnParameter) ? array("$unique" => $string) : array()
+            $parameters
         );
     }
 
@@ -623,13 +1093,47 @@ class LeadListRepository extends CommonRepository
     public function getSearchCommands()
     {
         return array(
-            'mautic.core.searchcommand.is' => array(
-                'mautic.lead.list.searchcommand.isglobal',
-                'mautic.core.searchcommand.ismine',
-                'mautic.core.searchcommand.ispublished',
-                'mautic.core.searchcommand.isinactive'
-            ),
+            'mautic.lead.list.searchcommand.isglobal',
+            'mautic.core.searchcommand.ismine',
+            'mautic.core.searchcommand.ispublished',
+            'mautic.core.searchcommand.isinactive',
             'mautic.core.searchcommand.name'
+        );
+    }
+
+    /**
+     * @return array
+     */
+    public function getRelativeDateStrings()
+    {
+        $keys = self::getRelativeDateTranslationKeys();
+
+        $strings = array();
+        foreach ($keys as $key) {
+            $strings[$key] = $this->translator->trans($key);
+        }
+
+        return $strings;
+    }
+
+    /**
+     * @return array
+     */
+    public static function getRelativeDateTranslationKeys()
+    {
+        return array(
+            'mautic.lead.list.month_last',
+            'mautic.lead.list.month_next',
+            'mautic.lead.list.month_this',
+            'mautic.lead.list.today',
+            'mautic.lead.list.tomorrow',
+            'mautic.lead.list.yesterday',
+            'mautic.lead.list.week_last',
+            'mautic.lead.list.week_next',
+            'mautic.lead.list.week_this',
+            'mautic.lead.list.year_last',
+            'mautic.lead.list.year_next',
+            'mautic.lead.list.year_this'
         );
     }
 
@@ -643,6 +1147,9 @@ class LeadListRepository extends CommonRepository
         );
     }
 
+    /**
+     * @return string
+     */
     public function getTableAlias()
     {
         return 'l';

@@ -23,6 +23,9 @@ class ListController extends FormController
      */
     public function indexAction($page = 1)
     {
+        /** @var \Mautic\LeadBundle\Model\ListModel $model */
+        $model = $this->factory->getModel('lead.list');
+
         //set some permissions
         $permissions = $this->factory->getSecurity()->isGranted(array(
             'lead:leads:viewown',
@@ -33,7 +36,7 @@ class ListController extends FormController
         ), 'RETURN_ARRAY');
 
         //Lists can be managed by anyone who has access to leads
-        if (!$permissions['lead:leads:viewown'] || !$permissions['lead:leads:viewother']) {
+        if (!$permissions['lead:leads:viewown'] && !$permissions['lead:leads:viewother']) {
             return $this->accessDenied();
         }
 
@@ -51,13 +54,12 @@ class ListController extends FormController
 
         if (!$permissions['lead:lists:viewother']) {
             $translator      = $this->get('translator');
-            $isCommand       = $translator->trans('mautic.core.searchcommand.is');
             $mine            = $translator->trans('mautic.core.searchcommand.ismine');
-            $global          = $translator->trans('mautic.lead.lists.searchcommand.isglobal');
-            $filter["force"] = " ($isCommand:$mine or $isCommand:$global)";
+            $global          = $translator->trans('mautic.lead.list.searchcommand.isglobal');
+            $filter["force"] = " ($mine or $global)";
         }
 
-        $items =$this->factory->getModel('lead.list')->getEntities(
+        $items = $model->getEntities(
             array(
                 'start'      => $start,
                 'limit'      => $limit,
@@ -65,12 +67,13 @@ class ListController extends FormController
             ));
 
         $count = count($items);
+
         if ($count && $count < ($start + 1)) {
             //the number of entities are now less then the current page so redirect to the last page
             if ($count === 1) {
                 $lastPage = 1;
             } else {
-                $lastPage = (floor($limit / $count)) ?: 1;
+                $lastPage = (ceil($count / $limit)) ?: 1;
             }
             $this->factory->getSession()->set('mautic.leadlist.page', $lastPage);
             $returnUrl = $this->generateUrl('mautic_leadlist_index', array('page' => $lastPage));
@@ -92,8 +95,12 @@ class ListController extends FormController
         //set what page currently on so that we can return here after form submission/cancellation
         $this->factory->getSession()->set('mautic.leadlist.page', $page);
 
+        $listIds    = array_keys($items->getIterator()->getArrayCopy());
+        $leadCounts = (!empty($listIds)) ? $model->getRepository()->getLeadCount($listIds) : array();
+
         $parameters = array(
             'items'       => $items,
+            'leadCounts'  => $leadCounts,
             'page'        => $page,
             'limit'       => $limit,
             'permissions' => $permissions,
@@ -127,6 +134,7 @@ class ListController extends FormController
 
         //retrieve the entity
         $list     = new LeadList();
+        /** @var \Mautic\LeadBundle\Model\ListModel $model */
         $model      =$this->factory->getModel('lead.list');
         //set the page we came from
         $page       = $this->factory->getSession()->get('mautic.leadlist.page', 1);
@@ -172,9 +180,7 @@ class ListController extends FormController
 
         return $this->delegateView(array(
             'viewParameters'  => array(
-                'form'            => $form->createView(),
-                'choices'         => $model->getChoiceFields(),
-                'operatorOptions' => $model->getFilterExpressionFunctions()
+                'form'            => $this->setFormTheme($form, 'MauticLeadBundle:List:form.html.php', 'MauticLeadBundle:FormTheme\Filter')
             ),
             'contentTemplate' => 'MauticLeadBundle:List:form.html.php',
             'passthroughVars' => array(
@@ -188,7 +194,10 @@ class ListController extends FormController
     /**
      * Generate's edit form and processes post data
      *
-     * @return \Symfony\Component\HttpFoundation\RedirectResponse|\Symfony\Component\HttpFoundation\Response
+     * @param            $objectId
+     * @param bool|false $ignorePost
+     *
+     * @return array|\Symfony\Component\HttpFoundation\JsonResponse|\Symfony\Component\HttpFoundation\RedirectResponse|\Symfony\Component\HttpFoundation\Response
      */
     public function editAction ($objectId, $ignorePost = false)
     {
@@ -258,12 +267,7 @@ class ListController extends FormController
             }
 
             if ($cancelled || ($valid && $form->get('buttons')->get('save')->isClicked())) {
-                return $this->postActionRedirect(
-                    array_merge($postActionVars, array(
-                        'viewParameters'  => array('objectId' => $list->getId()),
-                        'contentTemplate' => 'MauticLeadBundle:List:index'
-                    ))
-                );
+                return $this->postActionRedirect($postActionVars);
             }
         } else {
             //lock the entity
@@ -272,9 +276,8 @@ class ListController extends FormController
 
         return $this->delegateView(array(
             'viewParameters'  => array(
-                'form'            => $form->createView(),
-                'choices'         => $model->getChoiceFields(),
-                'operatorOptions' => $model->getFilterExpressionFunctions()
+                'form'            => $this->setFormTheme($form, 'MauticLeadBundle:List:form.html.php', 'MauticLeadBundle:FormTheme\Filter'),
+                'currentListId'   => $objectId,
             ),
             'contentTemplate' => 'MauticLeadBundle:List:form.html.php',
             'passthroughVars' => array(
@@ -367,7 +370,7 @@ class ListController extends FormController
 
         if ($this->request->getMethod() == 'POST') {
             $model     = $this->factory->getModel('lead.list');
-            $ids       = json_decode($this->request->query->get('ids', array()));
+            $ids       = json_decode($this->request->query->get('ids', '{}'));
             $deleteIds = array();
 
             // Loop over the IDs to perform access checks pre-delete
@@ -417,7 +420,7 @@ class ListController extends FormController
      *
      * @return JsonResponse|\Symfony\Component\HttpFoundation\RedirectResponse
      */
-    public function removeleadAction($objectId)
+    public function removeLeadAction($objectId)
     {
         return $this->changeList($objectId, 'remove');
     }
@@ -427,15 +430,16 @@ class ListController extends FormController
      *
      * @return JsonResponse|\Symfony\Component\HttpFoundation\RedirectResponse
      */
-    public function addLeadDecision($objectId)
+    public function addLeadAction($objectId)
     {
         return $this->changeList($objectId, 'add');
     }
 
     /**
      * @param $listId
+     * @param $action
      *
-     * @return JsonResponse|\Symfony\Component\HttpFoundation\RedirectResponse
+     * @return array|\Symfony\Component\HttpFoundation\JsonResponse|\Symfony\Component\HttpFoundation\RedirectResponse
      */
     protected function changeList($listId, $action) {
         $page        = $this->factory->getSession()->get('mautic.lead.page', 1);
@@ -480,14 +484,14 @@ class ListController extends FormController
                     'msgVars' => array('%id%' => $list->getId())
                 );
             } elseif (!$list->isGlobal() && !$this->factory->getSecurity()->hasEntityAccess(
-                true, 'lead:lists:viewother', $list->getCreatedBy()
-            )) {
+                    true, 'lead:lists:viewother', $list->getCreatedBy()
+                )) {
                 return $this->accessDenied();
             } elseif ($model->isLocked($lead)) {
                 return $this->isLocked($postActionVars, $lead, 'lead');
             } else {
                 $function = ($action == 'remove') ? 'removeLead' : 'addLead';
-                $model->$function($lead, $list);
+                $model->$function($lead, $list, true);
 
                 $identifier = $this->get('translator')->trans($lead->getPrimaryIdentifier());
                 $flashes[]  = array(

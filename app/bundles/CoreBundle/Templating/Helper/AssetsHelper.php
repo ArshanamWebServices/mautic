@@ -11,7 +11,6 @@ namespace Mautic\CoreBundle\Templating\Helper;
 
 use Mautic\CoreBundle\Factory\MauticFactory;
 use Mautic\CoreBundle\Helper\AssetGenerationHelper;
-use Symfony\Component\Finder\Finder;
 use Symfony\Component\Templating\Helper\CoreAssetsHelper;
 
 /**
@@ -34,6 +33,85 @@ class AssetsHelper extends CoreAssetsHelper
      * @var array
      */
     protected $assets;
+
+    /**
+     * @var
+     */
+    protected $version;
+
+    /**
+     * Gets asset prefix
+     *
+     * @param bool $includeEndingSlash
+     *
+     * @return string
+     */
+    public function getAssetPrefix($includeEndingSlash = false)
+    {
+        $prefix = $this->factory->getSystemPath('asset_prefix');
+        if (!empty($prefix)) {
+            if ($includeEndingSlash && substr($prefix, -1) != '/') {
+                $prefix .= '/';
+            } elseif (!$includeEndingSlash && substr($prefix, -1) == '/') {
+                $prefix = substr($prefix, 0, -1);
+            }
+        }
+
+        return $prefix;
+    }
+
+    /**
+     * Set asset url path
+     *
+     * @param string     $path
+     * @param null       $packageName
+     * @param null       $version
+     * @param bool|false $absolute
+     * @param bool|false $ignorePrefix
+     *
+     * @return string
+     */
+    public function getUrl($path, $packageName = null, $version = null)
+    {
+        // Dirty hack to work around strict notices with parent::getUrl
+        $absolute = $ignorePrefix = false;
+        if (func_num_args() > 3) {
+            $args = func_get_args();
+            $absolute = $args[3];
+            if (isset($args[4])) {
+                $ignorePrefix = $args[4];
+            }
+        }
+
+        // if we have http in the url it is absolute and we can just return it
+        if (strpos($path, 'http') === 0) {
+            return $path;
+        }
+
+        // otherwise build the complete path
+        if (!$ignorePrefix) {
+            $assetPrefix = $this->getAssetPrefix(strpos($path, '/') !== 0);
+            $path        = $assetPrefix.$path;
+        }
+
+        $url = parent::getUrl($path, $packageName, $version);
+
+        if ($absolute) {
+            $url = $this->getBaseUrl() . $url;
+        }
+
+        return $url;
+    }
+
+    /**
+     * Get base URL
+     *
+     * @return string
+     */
+    public function getBaseUrl()
+    {
+        return $this->factory->getRequest()->getSchemeAndHttpHost();
+    }
 
     /**
      * Adds a JS script to the template
@@ -135,10 +213,32 @@ class AssetsHelper extends CoreAssetsHelper
         if (empty($editorLoaded)) {
             $editorLoaded = true;
             $this->addScript(array(
-                'app/bundles/CoreBundle/Assets/js/libraries/ckeditor/ckeditor.js',
-                'app/bundles/CoreBundle/Assets/js/libraries/ckeditor/adapters/jquery.js'
+                'app/bundles/CoreBundle/Assets/js/libraries/ckeditor/ckeditor.js?v' . $this->version,
+                'app/bundles/CoreBundle/Assets/js/libraries/ckeditor/adapters/jquery.js?v' . $this->version
             ));
         }
+    }
+
+    /*
+     * Loads an addon script
+     *
+     * @param $assetFilepath the path to the file location. Can use full path or relative to mautic web root
+     * @param $onLoadCallback Mautic namespaced function to call for the script onload
+     * @param $alreadyLoadedCallback Mautic namespaced function to call if the script has already been loaded
+     */
+    public function includeScript($assetFilePath, $onLoadCallback = '', $alreadyLoadedCallback = '')
+    {
+        return  '<script async="async" type="text/javascript">Mautic.loadScript(\''.$this->getUrl($assetFilePath)."', '$onLoadCallback', '$alreadyLoadedCallback');</script>";
+    }
+
+    /*
+     * Include stylesheet
+     *
+     * @param $assetFilepath the path to the file location. Can use full path or relative to mautic web root
+     */
+    public function includeStylesheet($assetFilePath)
+    {
+        return  '<script async="async" type="text/javascript">Mautic.loadStylesheet(\'' . $this->getUrl($assetFilePath) . '\');</script>';
     }
 
     /**
@@ -298,15 +398,15 @@ class AssetsHelper extends CoreAssetsHelper
     /**
      * Output system scripts
      *
-     * @return void
+     * @param bool|false $includeEditor
      */
     public function outputSystemScripts($includeEditor = false)
     {
         $assets = $this->assetHelper->getAssets();
 
         if ($includeEditor) {
-            $assets['js'][] = 'app/bundles/CoreBundle/Assets/js/libraries/ckeditor/ckeditor.js';
-            $assets['js'][] = 'app/bundles/CoreBundle/Assets/js/libraries/ckeditor/adapters/jquery.js';
+            $assets['js'][] = 'app/bundles/CoreBundle/Assets/js/libraries/ckeditor/ckeditor.js?v' . $this->version;
+            $assets['js'][] = 'app/bundles/CoreBundle/Assets/js/libraries/ckeditor/adapters/jquery.js?v' . $this->version;
         }
 
         if (isset($assets['js'])) {
@@ -320,6 +420,7 @@ class AssetsHelper extends CoreAssetsHelper
      * Fetch system scripts
      *
      * @param bool $render If true, a string will be returned of rendered script for header
+     * @param bool $includeEditor
      *
      * @return array|string
      */
@@ -328,8 +429,8 @@ class AssetsHelper extends CoreAssetsHelper
         $assets = $this->assetHelper->getAssets();
 
         if ($includeEditor) {
-            $assets['js'][] = 'app/bundles/CoreBundle/Assets/js/libraries/ckeditor/ckeditor.js';
-            $assets['js'][] = 'app/bundles/CoreBundle/Assets/js/libraries/ckeditor/adapters/jquery.js';
+            $assets['js'][] = 'app/bundles/CoreBundle/Assets/js/libraries/ckeditor/ckeditor.js?v' . $this->version;
+            $assets['js'][] = 'app/bundles/CoreBundle/Assets/js/libraries/ckeditor/adapters/jquery.js?v' . $this->version;
         }
 
         if ($render) {
@@ -351,7 +452,6 @@ class AssetsHelper extends CoreAssetsHelper
      * @param string $text
      * @param array  $protocols  http/https, ftp, mail, twitter
      * @param array  $attributes
-     * @param string $mode       normal or all
      * @return string
      */
     public function makeLinks($text, $protocols = array('http', 'mail'), array $attributes = array())
@@ -381,12 +481,12 @@ class AssetsHelper extends CoreAssetsHelper
                             $link = $match[2] ?: $match[3];
                             return '<' . array_push($links, "<a $attr href=\"$protocol://$link\">$link</a>") . '>';
                         }, $text);
-                    break;
+                        break;
                     case 'mail':
                         $text = preg_replace_callback('~([^\s<]+?@[^\s<]+?\.[^\s<]+)(?<![\.,:])~', function ($match) use (&$links, $attr) {
                             return '<' . array_push($links, "<a $attr href=\"mailto:{$match[1]}\">{$match[1]}</a>") . '>';
                         }, $text);
-                    break;
+                        break;
                     case 'twitter':
                         $text = preg_replace_callback('~(?<!\w)[@#](\w++)~', function ($match) use (&$links, $attr) {
                             return '<' . array_push($links, "<a $attr href=\"https://twitter.com/" . ($match[0][0] == '@' ? '' : 'search/%23') . $match[1]  . "\">{$match[0]}</a>") . '>';
@@ -454,6 +554,7 @@ class AssetsHelper extends CoreAssetsHelper
     public function setFactory(MauticFactory $factory)
     {
         $this->factory = $factory;
+        $this->version = $factory->getVersion();
     }
 
     /**
@@ -465,7 +566,11 @@ class AssetsHelper extends CoreAssetsHelper
     }
 
     /**
-     * @param $country
+     * @param           $country
+     * @param bool|true $urlOnly
+     * @param string    $class
+     *
+     * @return string
      */
     public function getCountryFlag($country, $urlOnly = true, $class = '')
     {

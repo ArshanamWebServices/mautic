@@ -31,10 +31,15 @@ class PullTransifexCommand extends ContainerAwareCommand
     {
         $this->setName('mautic:transifex:pull')
             ->setDescription('Fetches translations for Mautic from Transifex')
+            ->addOption('language', null, InputOption::VALUE_OPTIONAL, 'Optional language to pull', null)
             ->setHelp(<<<EOT
 The <info>%command.name%</info> command is used to retrieve updated Mautic translations from Transifex and writes them to the filesystem.
 
 <info>php %command.full_name%</info>
+
+The command can optionally only pull files for a specific language with the --language option
+
+<info>php %command.full_name% --language=<language_code></info>
 EOT
         );
     }
@@ -56,8 +61,10 @@ EOT
             return 0;
         }
 
-        $options = $input->getOptions();
-        $files   = $this->getLanguageFiles();
+        $options        = $input->getOptions();
+        $languageFilter = $options['language'];
+        $files          = $this->getLanguageFiles();
+        $translationDir = dirname($this->getContainer()->getParameter('kernel.root_dir')) . '/translations/';
 
         /** @var \BabDev\Transifex\Transifex $transifex */
         $transifex = $this->getContainer()->get('transifex');
@@ -76,6 +83,11 @@ EOT
                             continue;
                         }
 
+                        // If we are filtering on a specific language, skip anything that doesn't match
+                        if ($languageFilter && $languageFilter != $language) {
+                            continue;
+                        }
+
                         $output->writeln($translator->trans('mautic.core.command.transifex_processing_language', array('%language%' => $language)));
 
                         $completed = str_replace('%', '', $stats->completed);
@@ -84,17 +96,28 @@ EOT
                         if ($completed >= 80) {
                             $translation = $transifex->translations->getTranslation('mautic', $alias, $language);
 
-                            $path = str_replace('en_US', $language, $file);
+                            $path = $translationDir . $language . '/' . $bundle . '/' . basename($file);
 
-                            // Verify the language's directory exists
-                            if (!is_dir(dirname($path))) {
-                                if (!mkdir(dirname($path))) {
+                            // Verify the directories exist
+                            if (!is_dir($translationDir . $language)) {
+                                if (!mkdir($translationDir . $language)) {
                                     $output->writeln(
-                                        $translator->trans(
-                                            'mautic.core.command.transifex_error_creating_directory',
-                                            array('%directory%' => dirname($path), '%language%' => $language)
-                                        )
-                                    );
+                                        $translator->trans('mautic.core.command.transifex_error_creating_directory', array(
+                                            '%directory%' => $translationDir . $language,
+                                            '%language%' => $language
+                                        )));
+
+                                    continue;
+                                }
+                            }
+
+                            if (!is_dir($translationDir . $language . '/' . $bundle)) {
+                                if (!mkdir($translationDir . $language . '/' . $bundle)) {
+                                    $output->writeln(
+                                        $translator->trans('mautic.core.command.transifex_error_creating_directory', array(
+                                            '%directory%' => $translationDir . $language . '/' . $bundle,
+                                            '%language%' => $language
+                                        )));
 
                                     continue;
                                 }
@@ -103,8 +126,7 @@ EOT
                             // Write the file to the system
                             if (!file_put_contents($path, $translation->content)) {
                                 $output->writeln(
-                                    $translator->trans(
-                                        'mautic.core.command.transifex_error_creating_file',
+                                    $translator->trans('mautic.core.command.transifex_error_creating_file',
                                         array('%file%' => $path, '%language%' => $language)
                                     )
                                 );
@@ -133,6 +155,7 @@ EOT
     {
         $files = array();
         $mauticBundles = $this->getContainer()->getParameter('mautic.bundles');
+        $pluginBundles  = $this->getContainer()->getParameter('mautic.plugin.bundles');
 
         foreach ($mauticBundles as $bundle) {
             // Parse the namespace into a filepath
@@ -151,6 +174,25 @@ EOT
                 }
             }
         }
+
+        foreach ($pluginBundles as $bundle) {
+            // Parse the namespace into a filepath
+            $translationsDir = $bundle['directory'] . '/Translations/en_US';
+
+            if (is_dir($translationsDir)) {
+                $files[$bundle['bundle']] = array();
+
+                // Get files within the directory
+                $finder = new Finder();
+                $finder->files()->in($translationsDir)->name('*.ini');
+
+                /** @var \Symfony\Component\Finder\SplFileInfo $file */
+                foreach ($finder as $file) {
+                    $files[$bundle['bundle']][] = $file->getPathname();
+                }
+            }
+        }
+
         return $files;
     }
 

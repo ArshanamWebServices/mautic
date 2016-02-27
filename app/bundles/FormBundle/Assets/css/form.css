@@ -42,10 +42,6 @@ textarea.form-html {
     height: 200px;
 }
 
-.col-form-actions {
-    width: 25px;
-}
-
 .col-form-id, .col-formresult-id {
     width: 75px;
 }
@@ -54,10 +50,10 @@ textarea.form-html {
     width: 100px;
 }
 
-.col-formresult-ip {
-    width: 125px;
-}
-
 .formresult-list th .input-group {
     margin-top: 10px;
+}
+
+.formresult-list th:not(.col-formresult-id):not(.col-actions) {
+    min-width: 125px;
 }

@@ -33,10 +33,11 @@ class LeadSubscriber extends CommonSubscriber
         return array(
             LeadEvents::LEAD_POST_SAVE       => array('onLeadPostSave', 0),
             LeadEvents::LEAD_POST_DELETE     => array('onLeadDelete', 0),
+            LeadEvents::LEAD_POST_MERGE      => array('onLeadMerge', 0),
             LeadEvents::FIELD_POST_SAVE      => array('onFieldPostSave', 0),
             LeadEvents::FIELD_POST_DELETE    => array('onFieldDelete', 0),
-            LeadEvents::NOTE_POST_SAVE      => array('onNotePostSave', 0),
-            LeadEvents::NOTE_POST_DELETE    => array('onNoteDelete', 0),
+            LeadEvents::NOTE_POST_SAVE       => array('onNotePostSave', 0),
+            LeadEvents::NOTE_POST_DELETE     => array('onNoteDelete', 0),
             LeadEvents::TIMELINE_ON_GENERATE => array('onTimelineGenerate', 0),
             UserEvents::USER_PRE_DELETE      => array('onUserDelete', 0)
         );
@@ -53,8 +54,16 @@ class LeadSubscriber extends CommonSubscriber
         //needs to be prevented
         static $preventLoop = array();
 
-        $lead = $event->getLead();
+        $lead  = $event->getLead();
+
         if ($details = $event->getChanges()) {
+            // Unset dateLastActive to prevent un-necessary audit log entries
+            unset($details['dateLastActive']);
+            if (empty($details)) {
+
+                return;
+            }
+
             $check = base64_encode($lead->getId() . serialize($details));
             if (!in_array($check, $preventLoop)) {
                 $preventLoop[] = $check;
@@ -69,21 +78,6 @@ class LeadSubscriber extends CommonSubscriber
                 );
                 $this->factory->getModel('core.auditLog')->writeToLog($log);
 
-                //trigger the points change event
-                if (isset($details["points"])) {
-                    if (!$event->isNew() && $this->dispatcher->hasListeners(LeadEvents::LEAD_POINTS_CHANGE)) {
-                        $pointsEvent = new Events\PointsChangeEvent($lead, $details['points'][0], $details['points'][1]);
-                        $this->dispatcher->dispatch(LeadEvents::LEAD_POINTS_CHANGE, $pointsEvent);
-                    }
-                }
-
-                //regenerate the lists leads if there are changes AND the lead wasn't created by getCurrentLead
-                if (!$lead->isNewlyCreated()) {
-                    /** @var \Mautic\LeadBundle\Model\LeadModel $model */
-                    $model = $this->factory->getModel('lead');
-                    $model->regenerateLeadLists($lead);
-                }
-
                 if (isset($details['dateIdentified'])) {
                     //log the day lead was identified
                     $log = array(
@@ -91,28 +85,36 @@ class LeadSubscriber extends CommonSubscriber
                         "object"    => "lead",
                         "objectId"  => $lead->getId(),
                         "action"    => "identified",
-                        "details"   => $details,
+                        "details"   => array(),
                         "ipAddress" => $this->factory->getIpAddressFromRequest()
                     );
                     $this->factory->getModel('core.auditLog')->writeToLog($log);
 
                     //trigger lead identified event
-                    if ($this->dispatcher->hasListeners(LeadEvents::LEAD_IDENTIFIED)) {
+                    if (!$lead->imported && $this->dispatcher->hasListeners(LeadEvents::LEAD_IDENTIFIED)) {
                         $this->dispatcher->dispatch(LeadEvents::LEAD_IDENTIFIED, $event);
                     }
                 }
 
                 //add if an ip was added
-                if (isset($details['ipAddresses'])) {
+                if (isset($details['ipAddresses']) && !empty($details['ipAddresses'][1])) {
                     $log = array(
                         "bundle"    => "lead",
                         "object"    => "lead",
                         "objectId"  => $lead->getId(),
                         "action"    => "ipadded",
-                        "details"   => $details['ipAddresses'][1],
+                        "details"   => $details['ipAddresses'],
                         "ipAddress" => $this->request->server->get('REMOTE_ADDR')
                     );
                     $this->factory->getModel('core.auditLog')->writeToLog($log);
+                }
+
+                //trigger the points change event
+                if (!$lead->imported && isset($details["points"]) && (int) $details["points"][1] > 0) {
+                    if (!$event->isNew() && $this->dispatcher->hasListeners(LeadEvents::LEAD_POINTS_CHANGE)) {
+                        $pointsEvent = new Events\PointsChangeEvent($lead, $details['points'][0], $details['points'][1]);
+                        $this->dispatcher->dispatch(LeadEvents::LEAD_POINTS_CHANGE, $pointsEvent);
+                    }
                 }
             }
         }
@@ -161,7 +163,7 @@ class LeadSubscriber extends CommonSubscriber
     /**
      * Add a field delete entry to the audit log
      *
-     * @param Events\LeadEvent $event
+     * @param Events\LeadFieldEvent $event
      */
     public function onFieldDelete(Events\LeadFieldEvent $event)
     {
@@ -241,6 +243,37 @@ class LeadSubscriber extends CommonSubscriber
             "objectId"   => $note->deletedId,
             "action"     => "delete",
             "details"    => array('text', $note->getText()),
+            "ipAddress"  => $this->factory->getIpAddressFromRequest()
+        );
+        $this->factory->getModel('core.auditLog')->writeToLog($log);
+    }
+
+    /**
+     * @param Events\LeadMergeEvent $event
+     */
+    public function onLeadMerge(Events\LeadMergeEvent $event)
+    {
+        $this->factory->getEntityManager()->getRepository('MauticLeadBundle:PointsChangeLog')->updateLead(
+            $event->getLoser()->getId(),
+            $event->getVictor()->getId()
+        );
+
+        $this->factory->getEntityManager()->getRepository('MauticLeadBundle:ListLead')->updateLead(
+            $event->getLoser()->getId(),
+            $event->getVictor()->getId()
+        );
+
+        $this->factory->getEntityManager()->getRepository('MauticLeadBundle:LeadNote')->updateLead(
+            $event->getLoser()->getId(),
+            $event->getVictor()->getId()
+        );
+
+        $log = array(
+            "bundle"     => "lead",
+            "object"     => "lead",
+            "objectId"   => $event->getLoser()->getId(),
+            "action"     => "merge",
+            "details"    => array('merged_into' => $event->getVictor()->getId()),
             "ipAddress"  => $this->factory->getIpAddressFromRequest()
         );
         $this->factory->getModel('core.auditLog')->writeToLog($log);

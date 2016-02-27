@@ -23,6 +23,9 @@ class CampaignEventHelper
     /**
      * @param $event
      * @param $factory
+     * @param $lead
+     *
+     * @return bool
      */
     public static function changeLists ($event, $factory, $lead)
     {
@@ -49,8 +52,9 @@ class CampaignEventHelper
     }
 
     /**
-     * @param $event
-     * @param $lead
+     * @param               $event
+     * @param               $lead
+     * @param MauticFactory $factory
      *
      * @return bool
      */
@@ -74,10 +78,30 @@ class CampaignEventHelper
             $log->setDateAdded(new \DateTime());
             $lead->addPointsChangeLog($log);
 
+            $factory->getModel('lead')->saveEntity($lead);
             $somethingHappened = true;
         }
 
         return $somethingHappened;
+    }
+
+    /**
+     * @param $event
+     * @param $factory
+     * @param $lead
+     *
+     * @return bool
+     */
+    public static function updateLead ($event, $factory, $lead)
+    {
+        $properties = $event['properties'];
+
+        /** @var \Mautic\LeadBundle\Model\LeadModel $leadModel */
+        $leadModel  = $factory->getModel('lead');
+        $leadModel->setFieldValues($lead, $properties, false);
+        $leadModel->saveEntity($lead);
+
+        return true;
     }
 
     /**
@@ -122,5 +146,29 @@ class CampaignEventHelper
         }
 
         return true;
+    }
+
+    /**
+     * Determine if this campaign applies
+     *
+     * @param $eventDetails
+     * @param $event
+     *
+     * @return bool
+     */
+    public static function validateFormValue(MauticFactory $factory, $event, Lead $lead)
+    {
+        if (!$lead || !$lead->getId()) {
+            return false;
+        }
+
+        $operators = $factory->getModel('lead')->getFilterExpressionFunctions();
+
+        return $factory->getModel('lead.field')->getRepository()->compareValue(
+            $lead->getId(),
+            $event['properties']['field'],
+            $event['properties']['value'],
+            $operators[$event['properties']['operator']]['expr']
+        );
     }
 }

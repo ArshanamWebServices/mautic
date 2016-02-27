@@ -28,16 +28,16 @@ class EventType extends AbstractType
      */
     public function buildForm (FormBuilderInterface $builder, array $options)
     {
-        $builder->addEventSubscriber(new CleanFormSubscriber());
+        $masks = array();
 
         $builder->add('name', 'text', array(
-            'label'      => 'mautic.campaign.event.name',
+            'label'      => 'mautic.core.name',
             'label_attr' => array('class' => 'control-label'),
             'attr'       => array('class' => 'form-control'),
             'required'   => false
         ));
 
-        if ($options['data']['eventType'] == 'action') {
+        if ($options['data']['eventType'] == 'action' || $options['data']['eventType'] == 'condition') {
             $triggerMode = (empty($options['data']['triggerMode'])) ? 'immediate' : $options['data']['triggerMode'];
             $builder->add('triggerMode', 'button_group', array(
                 'choices' => array(
@@ -102,10 +102,17 @@ class EventType extends AbstractType
 
         if (!empty($options['settings']['formType'])) {
             $properties = (!empty($options['data']['properties'])) ? $options['data']['properties'] : null;
-            $builder->add('properties', $options['settings']['formType'], array(
+            $formTypeOptions = array(
                 'label' => false,
                 'data'  => $properties
-            ));
+            );
+            if (isset($options['settings']['formTypeCleanMasks'])) {
+                $masks['properties'] = $options['settings']['formTypeCleanMasks'];
+            }
+            if (!empty($options['settings']['formTypeOptions'])) {
+                $formTypeOptions = array_merge($formTypeOptions, $options['settings']['formTypeOptions']);
+            }
+            $builder->add('properties', $options['settings']['formType'], $formTypeOptions);
         }
 
         $builder->add('type', 'hidden');
@@ -129,12 +136,14 @@ class EventType extends AbstractType
             'save_icon' => $btnIcon,
             'save_onclick' => 'Mautic.submitCampaignEvent(event)',
             'apply_text' => false,
-            'container_class' => 'bottom-campaignevent-buttons'
+            'container_class' => 'bottom-form-buttons'
         ));
 
         $builder->add('campaignId', 'hidden', array(
             'mapped' => false
         ));
+
+        $builder->addEventSubscriber(new CleanFormSubscriber($masks));
 
         if (!empty($options["action"])) {
             $builder->setAction($options["action"]);

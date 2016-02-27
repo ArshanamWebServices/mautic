@@ -29,11 +29,9 @@ class RoleRepository extends CommonRepository
     {
         $q = $this->createQueryBuilder('r');
 
-        $this->buildClauses($q, $args);
+        $args['qb'] = $q;
 
-        $query = $q->getQuery();
-
-        return new Paginator($query);
+        return parent::getEntities($args);
     }
 
     /**
@@ -96,17 +94,12 @@ class RoleRepository extends CommonRepository
     protected function addSearchCommandWhereClause(&$q, $filter)
     {
         $command         = $filter->command;
-        $string          = $filter->string;
         $unique          = $this->generateRandomParameterName();
         $returnParameter = true; //returning a parameter that is not used will lead to a Doctrine error
         $expr            = false;
         switch ($command) {
-            case $this->translator->trans('mautic.core.searchcommand.is'):
-                switch($string) {
-                    case $this->translator->trans('mautic.user.user.searchcommand.isadmin');
-                        $expr = $q->expr()->eq("r.isAdmin", 1);
-                        break;
-                }
+            case $this->translator->trans('mautic.user.user.searchcommand.isadmin');
+                $expr = $q->expr()->eq("r.isAdmin", 1);
                 $returnParameter = false;
                 break;
             case $this->translator->trans('mautic.core.searchcommand.name'):
@@ -131,9 +124,7 @@ class RoleRepository extends CommonRepository
     public function getSearchCommands()
     {
         return array(
-            'mautic.core.searchcommand.is' => array(
-                'mautic.user.user.searchcommand.isadmin'
-            ),
+            'mautic.user.user.searchcommand.isadmin',
             'mautic.core.searchcommand.name'
         );
     }
@@ -146,5 +137,13 @@ class RoleRepository extends CommonRepository
         return array(
             array('r.name', 'ASC')
         );
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getTableAlias()
+    {
+        return 'r';
     }
 }

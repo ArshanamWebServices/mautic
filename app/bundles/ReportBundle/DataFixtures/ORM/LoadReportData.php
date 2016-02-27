@@ -48,12 +48,13 @@ class LoadReportData extends AbstractFixture implements OrderedFixtureInterface,
             foreach ($rows as $col => $val) {
                 if ($val != "NULL") {
                     $setter = "set" . ucfirst($col);
-                    if (in_array($col, array('columns', 'filters'))) {
+                    if (in_array($col, array('columns', 'filters', 'graphs', 'tableOrder'))) {
                         $val = unserialize(stripslashes($val));
                     }
                     $report->$setter($val);
                 }
             }
+
             $manager->persist($report);
 
             $this->setReference('report-' . $key, $report);

@@ -22,21 +22,17 @@ class PointsChangeLogRepository extends CommonRepository
     /**
      * Fetch Lead's points for some period of time.
      *
-     * @param integer $quantity of units
-     * @param string $unit of time php.net/manual/en/class.dateinterval.php#dateinterval.props
-     * @param array $args
+     * @param $fromDate
      *
      * @return mixed
      * @throws \Doctrine\ORM\NoResultException
      * @throws \Doctrine\ORM\NonUniqueResultException
      */
-    public function getLeadPoints($quantity, $unit, $args = array())
+    public function getLeadPoints($fromDate, $args = array())
     {
-        $graphData = GraphHelper::prepareDatetimeLineGraphData($quantity, $unit, array('viewed'));
-
         // Load points for selected period
         $q = $this->createQueryBuilder('pl');
-        $q->select('pl.delta, pl.dateAdded');
+        $q->select('pl.delta as data, pl.dateAdded as date');
 
         if (isset($args['lead_id'])) {
             $q->where($q->expr()->eq('IDENTITY(pl.lead)', ':lead'))
@@ -44,27 +40,12 @@ class PointsChangeLogRepository extends CommonRepository
         }
 
         $q->andwhere($q->expr()->gte('pl.dateAdded', ':date'))
-            ->setParameter('date', $graphData['fromDate'])
+            ->setParameter('date', $fromDate)
             ->orderBy('pl.dateAdded', 'ASC');
 
         $points = $q->getQuery()->getArrayResult();
 
-        // Count total until date
-        $q2 = $this->createQueryBuilder('pl');
-        $q2->select('sum(pl.delta) as total');
-
-        if (isset($args['lead_id'])) {
-            $q2->where($q->expr()->eq('IDENTITY(pl.lead)', ':lead'))
-                ->setParameter('lead', $args['lead_id']);
-        }
-
-        $q2->andwhere($q->expr()->lt('pl.dateAdded', ':date'))
-            ->setParameter('date', $graphData['fromDate']);
-
-        $total = $q2->getQuery()->getSingleResult();
-        $total = (int) $total['total'];
-
-        return GraphHelper::mergeLineGraphData($graphData, $points, $unit, 0, 'dateAdded', 'delta', false, $total);
+        return $points;
     }
 
     /**
@@ -108,10 +89,8 @@ class PointsChangeLogRepository extends CommonRepository
      */
     public function getMostPoints($query, $limit = 10, $offset = 0)
     {
-        $query->from(MAUTIC_TABLE_PREFIX.'lead_points_change_log', 'lp')
-            ->leftJoin('lp', MAUTIC_TABLE_PREFIX.'leads', 'l', 'lp.lead_id = l.id')
-            ->setMaxResults($limit)
-            ->setFirstResult($offset);
+        $query->setMaxResults($limit)
+                ->setFirstResult($offset);
 
         $results = $query->execute()->fetchAll();
         return $results;
@@ -128,10 +107,8 @@ class PointsChangeLogRepository extends CommonRepository
      */
     public function getMostLeads($query, $limit = 10, $offset = 0)
     {
-        $query->from(MAUTIC_TABLE_PREFIX.'leads', 'l')
-            ->leftJoin('l', MAUTIC_TABLE_PREFIX.'lead_points_change_log', 'lp', 'lp.lead_id = l.id')
-            ->setMaxResults($limit)
-            ->setFirstResult($offset);
+        $query->setMaxResults($limit)
+                ->setFirstResult($offset);
 
         $results = $query->execute()->fetchAll();
         return $results;
@@ -157,5 +134,20 @@ class PointsChangeLogRepository extends CommonRepository
         $result = $query->execute()->fetch();
 
         return $result['quantity'];
+    }
+
+    /**
+     * Updates lead ID (e.g. after a lead merge)
+     *
+     * @param $fromLeadId
+     * @param $toLeadId
+     */
+    public function updateLead($fromLeadId, $toLeadId)
+    {
+        $q = $this->_em->getConnection()->createQueryBuilder();
+        $q->update(MAUTIC_TABLE_PREFIX . 'lead_points_change_log')
+            ->set('lead_id', (int) $toLeadId)
+            ->where('lead_id = ' . (int) $fromLeadId)
+            ->execute();
     }
 }

@@ -49,6 +49,7 @@ class ThemeHelper
      * @param MauticFactory $factory
      * @param string        $theme
      *
+     * @throws BadConfigurationException
      * @throws FileNotFoundException
      */
     public function __construct(MauticFactory $factory, $theme = 'current')
@@ -59,7 +60,7 @@ class ThemeHelper
             $this->theme = 'Mauve';
         }
         $this->themeDir  = $factory->getSystemPath('themes') . '/' . $this->theme;
-        $this->themePath = $factory->getSystemPath('root') . '/' . $this->themeDir;
+        $this->themePath = $factory->getSystemPath('themes_root') . '/' . $this->themeDir;
 
         //check to make sure the theme exists
         if (!file_exists($this->themePath)) {
@@ -76,6 +77,26 @@ class ThemeHelper
         if (!isset($this->config['name'])) {
             throw new BadConfigurationException($this->theme . ' does not have a valid config file');
         }
+    }
+
+    /**
+     * Return  name of the template
+     *
+     * @return mixed
+     */
+    public function getName()
+    {
+        return $this->config['name'];
+    }
+
+    /**
+     * Returns the theme folder name
+     *
+     * @return string
+     */
+    public function getTheme()
+    {
+        return $this->theme;
     }
 
     /**

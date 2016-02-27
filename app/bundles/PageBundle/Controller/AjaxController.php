@@ -113,8 +113,9 @@ class AjaxController extends CommonAjaxController
                 $html     = '';
                 $formType = (!empty($abTestSettings[$type]['formType'])) ? $abTestSettings[$type]['formType'] : '';
                 if (!empty($formType)) {
-                    $form     = $this->get('form.factory')->create('page_abtest_settings', array(), array('formType' => $formType));
-                    $html     = $this->renderView('MauticPageBundle:AbTest:form.html.php', array(
+                    $formOptions = (!empty($abTestSettings[$type]['formTypeOptions'])) ? $abTestSettings[$type]['formTypeOptions'] : array();
+                    $form        = $this->get('form.factory')->create('page_abtest_settings', array(), array('formType' => $formType, 'formTypeOptions' => $formOptions));
+                    $html        = $this->renderView('MauticPageBundle:AbTest:form.html.php', array(
                         'form' => $this->setFormTheme($form, 'MauticPageBundle:AbTest:form.html.php', 'MauticPageBundle:FormTheme\Page')
                     ));
                 }
@@ -135,4 +136,20 @@ class AjaxController extends CommonAjaxController
 
         return $this->sendJsonResponse($dataArray);
     }
+
+    /**
+     * Called by parent::getBuilderTokensAction()
+     *
+     * @param $query
+     *
+     * @return array
+     */
+    protected function getBuilderTokens($query)
+    {
+        /** @var \Mautic\PageBundle\Model\PageModel $model */
+        $model  = $this->factory->getModel('page');
+
+        return $model->getBuilderComponents(null, array('tokens', 'visualTokens'), $query);
+    }
+
 }

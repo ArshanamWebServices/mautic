@@ -10,44 +10,24 @@
 //extend the template chosen
 $view->extend(":$template:page.html.php");
 
-
-if ($googleAnalytics) {
-    $gCode = <<<GA
-(function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
-    (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
-    m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
-})(window,document,'script','//www.google-analytics.com/analytics.js','ga');
-
-ga('create', '$googleAnalytics', 'auto');
-ga('send', 'pageview');
-GA;
-    $view['assets']->addScriptDeclaration($gCode);
+if ($code = $view['analytics']->getCode()) {
+    $view['assets']->addCustomDeclaration($code);
 }
 
 //Set the slots
 foreach ($slots as $slot => $slotConfig) {
 
-	// backward compatibility - if slotConfig array does not exist
+    // backward compatibility - if slotConfig array does not exist
     if (is_numeric($slot)) {
         $slot = $slotConfig;
         $slotConfig = array();
     }
 
-    // define default config if does not exist
-    if (!isset($slotConfig['type'])) {
-        $slotConfig['type'] = 'html';
-    }
-
-    if ($slotConfig['type'] == 'html' || $slotConfig['type'] == 'text') {
-	    $value = isset($content[$slot]) ? $content[$slot] : "";
-	    $view['slots']->set($slot, $value);
-	}
-
-	if ($slotConfig['type'] == 'slideshow') {
-		if (isset($content[$slot])) {
-			$options = json_decode($content[$slot], true);
-		} else {
-			$options = array(
+    if (isset($slotConfig['type']) && $slotConfig['type'] == 'slideshow') {
+        if (isset($content[$slot])) {
+            $options = json_decode($content[$slot], true);
+        } else {
+            $options = array(
                 'width' => '100%',
                 'height' => '250px',
                 'background_color' => 'transparent',
@@ -58,19 +38,19 @@ foreach ($slots as $slot => $slotConfig) {
                 'wrap' => true,
                 'keyboard' => true
             );
-		}
+        }
 
-		// Create sample slides for first time or if all slides were deleted
+        // Create sample slides for first time or if all slides were deleted
         if (empty($options['slides'])) {
             $options['slides'] =  array (
                 array (
                     'order' => 0,
-                    'background-image' => '../../../media/images/mautic_logo_lb200.png',
+                    'background-image' => $view['assets']->getUrl('media/images/mautic_logo_lb200.png'),
                     'captionheader' => 'Caption 1'
                 ),
                 array (
                     'order' => 1,
-                    'background-image' => '../../../media/images/mautic_logo_db200.png',
+                    'background-image' => $view['assets']->getUrl('media/images/mautic_logo_db200.png'),
                     'captionheader' => 'Caption 2'
                 )
             );
@@ -82,9 +62,16 @@ foreach ($slots as $slot => $slotConfig) {
             return strcmp($a['order'], $b['order']);
         });
 
-		$options['slot'] = $slot;
-		$options['public'] = true;
+        $options['slot'] = $slot;
+        $options['public'] = true;
 
         $view['slots']->set($slot, $view->render('MauticPageBundle:Page:Slots/slideshow.html.php', $options));
+    } elseif (isset($slotConfig['type']) && $slotConfig['type'] == 'textarea') {
+        $value = isset($content[$slot]) ? nl2br($content[$slot]) : "";
+        $view['slots']->set($slot, $value);
+    } else {
+        // Fallback for other types like html, text, textarea and all unknown
+        $value = isset($content[$slot]) ? $content[$slot] : "";
+        $view['slots']->set($slot, $value);
     }
 }

@@ -11,8 +11,8 @@ namespace Mautic\InstallBundle\Configurator\Form;
 
 use Mautic\InstallBundle\Configurator\Step\DoctrineStep;
 use Symfony\Component\Form\AbstractType;
-use Symfony\Component\Form\Extension\Core\ChoiceList\ChoiceList;
 use Symfony\Component\Form\FormBuilderInterface;
+use Symfony\Component\Validator\Constraints\Choice;
 
 /**
  * Doctrine Form Type.
@@ -36,7 +36,15 @@ class DoctrineStepType extends AbstractType
             'empty_value' => false,
             'required'    => true,
             'attr'        => array(
-                'class' => 'form-control'
+                'class'    => 'form-control',
+                'onchange' => 'MauticInstaller.toggleDatabaseSettings(this.value);'
+            ),
+            'constraints' => array(
+                new Choice(
+                    array(
+                        'callback' => '\Mautic\InstallBundle\Configurator\Step\DoctrineStep::getDriverKeys'
+                    )
+                )
             )
         ));
 
@@ -81,6 +89,16 @@ class DoctrineStepType extends AbstractType
             'attr'       => array(
                 'class'    => 'form-control',
                 'preaddon' => 'fa fa-lock'
+            ),
+            'required'   => false
+        ));
+
+        $builder->add('path', 'text', array(
+            'label'      => 'mautic.install.form.database.path',
+            'label_attr' => array('class' => 'control-label'),
+            'attr'       => array(
+                'class'   => 'form-control',
+                'tooltip' => 'mautic.install.form.database.path.tooltip'
             ),
             'required'   => true
         ));

@@ -10,12 +10,14 @@
 namespace Mautic\PointBundle\Model;
 
 use Mautic\CoreBundle\Model\FormModel as CommonFormModel;
+use Mautic\LeadBundle\Entity\Lead;
 use Mautic\PointBundle\Entity\Action;
 use Mautic\PointBundle\Entity\LeadPointLog;
 use Mautic\PointBundle\Entity\Point;
 use Mautic\PointBundle\Event\PointBuilderEvent;
 use Mautic\PointBundle\Event\PointEvent;
 use Mautic\PointBundle\PointEvents;
+use Symfony\Component\EventDispatcher\Event;
 use Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException;
 
 /**
@@ -77,7 +79,7 @@ class PointModel extends CommonFormModel
      *
      * @throws MethodNotAllowedHttpException
      */
-    protected function dispatchEvent($action, &$entity, $isNew = false, $event = false)
+    protected function dispatchEvent($action, &$entity, $isNew = false, Event $event = null)
     {
         if (!$entity instanceof Point) {
             throw new MethodNotAllowedHttpException(array('Point'));
@@ -97,7 +99,7 @@ class PointModel extends CommonFormModel
                 $name = PointEvents::POINT_POST_DELETE;
                 break;
             default:
-                return false;
+                return null;
         }
 
         if ($this->dispatcher->hasListeners($name)) {
@@ -110,7 +112,7 @@ class PointModel extends CommonFormModel
             return $event;
         }
 
-        return false;
+        return null;
     }
 
     /**
@@ -141,10 +143,11 @@ class PointModel extends CommonFormModel
      * @param $type
      * @param mixed $eventDetails passthrough from function triggering action to the callback function
      * @param mixed $typeId Something unique to the triggering event to prevent  unnecessary duplicate calls
+     * @param Lead  $lead
      *
      * @return void
      */
-    public function triggerAction($type, $eventDetails = null, $typeId = null)
+    public function triggerAction($type, $eventDetails = null, $typeId = null, Lead $lead = null)
     {
         //only trigger actions for anonymous users
         if (!$this->security->isAnonymous()) {
@@ -164,11 +167,20 @@ class PointModel extends CommonFormModel
 
         //find all the actions for published points
         /** @var \Mautic\PointBundle\Entity\PointRepository $repo */
-        $repo         = $this->getRepository();
+        $repo            = $this->getRepository();
         $availablePoints = $repo->getPublishedByType($type);
+        /** @var \Mautic\LeadBundle\Model\LeadModel $leadModel */
         $leadModel    = $this->factory->getModel('lead');
-        $lead         = $leadModel->getCurrentLead();
         $ipAddress    = $this->factory->getIpAddress();
+
+        if (null === $lead) {
+            $lead = $leadModel->getCurrentLead();
+
+            if (null === $lead || !$lead->getId()) {
+
+                return;
+            }
+        }
 
         //get available actions
         $availableActions = $this->getPointActions();
@@ -176,8 +188,7 @@ class PointModel extends CommonFormModel
         //get a list of actions that has already been performed on this lead
         $completedActions = $repo->getCompletedLeadActions($type, $lead->getId());
 
-        $persist     = array();
-        $persistLead = false;
+        $persist = array();
         foreach ($availablePoints as $action) {
             //if it's already been done, then skip it
             if (isset($completedActions[$action->getId()])) {
@@ -213,7 +224,7 @@ class PointModel extends CommonFormModel
                     $parts      = explode('::', $callback);
                     $reflection = new \ReflectionMethod($parts[0], $parts[1]);
                 } else {
-                    new \ReflectionMethod(null, $callback);
+                    $reflection = new \ReflectionMethod(null, $callback);
                 }
 
                 $pass = array();
@@ -244,21 +255,17 @@ class PointModel extends CommonFormModel
                     $log->setLead($lead);
                     $log->setDateFired(new \DateTime());
 
-                    $action->addLog($log);
-                    $persist[] = $action;
-                    $persistLead = true;
+                    $persist[] = $log;
                 }
             }
         }
 
-        //save the lead
-        if ($persistLead) {
-            $leadModel->saveEntity($lead);
-        }
-
-        //persist the action xref
         if (!empty($persist)) {
+            $leadModel->saveEntity($lead);
             $this->getRepository()->saveEntities($persist);
+
+            // Detach logs to reserve memory
+            $this->em->clear('Mautic\PointBundle\Entity\LeadPointLog');
         }
     }
 }

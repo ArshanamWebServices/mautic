@@ -10,8 +10,9 @@
 //extend the template chosen
 $view->extend(":$template:page.html.php");
 
-$view['assets']->addScriptDeclaration("var mauticBasePath = '$basePath';");
-$view['assets']->addScriptDeclaration("var mauticAjaxUrl = '" . $view['router']->generate("mautic_core_ajax") . "';");
+$view['assets']->addScriptDeclaration("var mauticBasePath    = '$basePath';");
+$view['assets']->addScriptDeclaration("var mauticAjaxUrl     = '" . $view['router']->generate("mautic_core_ajax") . "';");
+$view['assets']->addScriptDeclaration("var mauticAssetPrefix = '" . $view['assets']->getAssetPrefix(true) . "';");
 $view['assets']->addCustomDeclaration($view['assets']->getSystemScripts(true, true));
 $view['assets']->addScript('app/bundles/PageBundle/Assets/builder/builder.js');
 $view['assets']->addStylesheet('app/bundles/PageBundle/Assets/builder/pick-a-color.css');
@@ -34,12 +35,13 @@ foreach ($slots as $slot => $slotConfig) {
         $slotConfig['placeholder'] = 'mautic.page.builder.addcontent';
     }
 
-    if ($slotConfig['type'] == 'html' || $slotConfig['type'] == 'text') {
-        $value = isset($content[$slot]) ? $content[$slot] : "";
-        $view['slots']->set($slot, "<div id=\"slot-{$slot}\" class=\"mautic-editable\" contenteditable=true data-placeholder=\"{$view['translator']->trans('mautic.page.builder.addcontent')}\">{$value}</div>");
-    }
+    $value = isset($content[$slot]) ? $content[$slot] : "";
 
-    if ($slotConfig['type'] == 'slideshow') {
+    if ($slotConfig['type'] == 'text') {
+        $view['slots']->set($slot, "<input id=\"slot-{$slot}\" type=\"text\" value=\"{$value}\" class=\"mautic-editable\" placeholder=\"{$view['translator']->trans($slotConfig['placeholder'])}\"/>");
+    } elseif ($slotConfig['type'] == 'textarea') {
+        $view['slots']->set($slot, "<textarea id=\"slot-{$slot}\" class=\"mautic-editable\" placeholder=\"{$view['translator']->trans($slotConfig['placeholder'])}\">{$value}</textarea>");
+    } elseif ($slotConfig['type'] == 'slideshow') {
         if (isset($content[$slot])) {
             $options = json_decode($content[$slot], true);
         } else {
@@ -61,12 +63,12 @@ foreach ($slots as $slot => $slotConfig) {
             $options['slides'] =  array (
                 array (
                     'order' => 0,
-                    'background-image' => '../../../media/images/mautic_logo_lb200.png',
+                    'background-image' => $view['assets']->getUrl('media/images/mautic_logo_lb200.png'),
                     'captionheader' => 'Caption 1'
                 ),
                 array (
                     'order' => 1,
-                    'background-image' => '../../../media/images/mautic_logo_db200.png',
+                    'background-image' => $view['assets']->getUrl('media/images/mautic_logo_db200.png'),
                     'captionheader' => 'Caption 2'
                 )
             );
@@ -102,6 +104,9 @@ foreach ($slots as $slot => $slotConfig) {
         }
 
         $view['slots']->set($slot, $view->render('MauticPageBundle:Page:Slots/slideshow.html.php', $options));
+    } else {
+        // valback for html and unknown field types
+        $view['slots']->set($slot, "<div id=\"slot-{$slot}\" class=\"mautic-editable\" contenteditable=true data-placeholder=\"{$view['translator']->trans($slotConfig['placeholder'])}\">{$value}</div>");
     }
 }
 

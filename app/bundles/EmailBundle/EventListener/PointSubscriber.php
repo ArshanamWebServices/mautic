@@ -44,7 +44,7 @@ class PointSubscriber extends CommonSubscriber
     public function onPointBuild(PointBuilderEvent $event)
     {
         $action = array(
-            'group'       => 'mautic.email.point.action',
+            'group'       => 'mautic.email.actions',
             'label'       => 'mautic.email.point.action.open',
             'callback'    => array('\\Mautic\\EmailBundle\\Helper\\PointEventHelper', 'validateEmail'),
             'formType'    => 'emailopen_list'
@@ -53,7 +53,7 @@ class PointSubscriber extends CommonSubscriber
         $event->addAction('email.open', $action);
 
         $action = array(
-            'group'       => 'mautic.email.point.action',
+            'group'       => 'mautic.email.actions',
             'label'       => 'mautic.email.point.action.send',
             'callback'    => array('\\Mautic\\EmailBundle\\Helper\\PointEventHelper', 'validateEmail'),
             'formType'    => 'emailopen_list'
@@ -68,10 +68,12 @@ class PointSubscriber extends CommonSubscriber
     public function onTriggerBuild(TriggerBuilderEvent $event)
     {
         $sendEvent = array(
-            'group'       => 'mautic.email.point.trigger',
-            'label'       => 'mautic.email.point.trigger.sendemail',
-            'callback'    => array('\\Mautic\\EmailBundle\\Helper\\PointEventHelper', 'sendEmail'),
-            'formType'    => 'emailsend_list'
+            'group'           => 'mautic.email.point.trigger',
+            'label'           => 'mautic.email.point.trigger.sendemail',
+            'callback'        => array('\\Mautic\\EmailBundle\\Helper\\PointEventHelper', 'sendEmail'),
+            'formType'        => 'emailsend_list',
+            'formTypeOptions' => array('update_select' => 'pointtriggerevent_properties_email'),
+            'formTheme'       => 'MauticEmailBundle:FormTheme\EmailSendList',
         );
 
         $event->addEvent('email.send', $sendEvent);
@@ -94,6 +96,12 @@ class PointSubscriber extends CommonSubscriber
      */
     public function onEmailSend(EmailSendEvent $event)
     {
-        $this->factory->getModel('point')->triggerAction('email.send', $event->getEmail());
+        if ($leadArray = $event->getLead()) {
+            $lead = $this->factory->getEntityManager()->getReference('MauticLeadBundle:Lead', $leadArray['id']);
+        } else {
+
+            return;
+        }
+        $this->factory->getModel('point')->triggerAction('email.send', $event->getEmail(), null, $lead);
     }
 }

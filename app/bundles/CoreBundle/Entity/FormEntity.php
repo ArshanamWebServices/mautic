@@ -10,94 +10,66 @@
 namespace Mautic\CoreBundle\Entity;
 
 use Doctrine\ORM\Mapping as ORM;
-use JMS\Serializer\Annotation as Serializer;
+use Mautic\ApiBundle\Serializer\Driver\ApiMetadataDriver;
+use Mautic\CoreBundle\Doctrine\Mapping\ClassMetadataBuilder;
 use Mautic\CoreBundle\Helper\DateTimeHelper;
 use Mautic\UserBundle\Entity\User;
 
 /**
  * Class FormEntity
  *
- * @ORM\MappedSuperclass
- * @ORM\HasLifecycleCallbacks
- * @Serializer\ExclusionPolicy("all")
+ * @package Mautic\CoreBundle\Entity
  */
 class FormEntity extends CommonEntity
 {
 
     /**
-     * @ORM\Column(name="is_published", type="boolean")
-     * @Serializer\Expose
-     * @Serializer\Since("1.0")
-     * @Serializer\Groups({"publishDetails"})
+     * @var bool
      */
     private $isPublished = true;
 
     /**
-     * @ORM\Column(name="date_added", type="datetime", nullable=true)
-     * @Serializer\Expose
-     * @Serializer\Since("1.0")
-     * @Serializer\Groups({"publishDetails"})
+     * @var null|\DateTime
      */
     private $dateAdded = null;
 
     /**
-     * @ORM\ManyToOne(targetEntity="Mautic\UserBundle\Entity\User")
-     * @ORM\JoinColumn(name="created_by", referencedColumnName="id", nullable=true, onDelete="SET NULL")
-     * @Serializer\Expose
-     * @Serializer\Since("1.0")
-     * @Serializer\Groups({"publishDetails"})
+     * @var null|int
      */
     private $createdBy;
 
     /**
-     * @ORM\Column(name="created_by_user", type="string", nullable=true)
-     * @Serializer\Expose
-     * @Serializer\Since("1.0")
-     * @Serializer\Groups({"publishDetails"})
+     * @var null|string
      */
     private $createdByUser;
 
     /**
-     * @ORM\Column(name="date_modified", type="datetime", nullable=true)
-     * @Serializer\Expose
-     * @Serializer\Since("1.0")
-     * @Serializer\Groups({"publishDetails"})
+     * @var null|\DateTime
      */
     private $dateModified;
 
     /**
-     * @ORM\ManyToOne(targetEntity="Mautic\UserBundle\Entity\User")
-     * @ORM\JoinColumn(name="modified_by", referencedColumnName="id", nullable=true, onDelete="SET NULL")
-     * @Serializer\Expose
-     * @Serializer\Since("1.0")
-     * @Serializer\Groups({"publishDetails"})
+     * var null|int
      */
     private $modifiedBy;
 
     /**
-     * @ORM\Column(name="modified_by_user", type="string", nullable=true)
-     * @Serializer\Expose
-     * @Serializer\Since("1.0")
-     * @Serializer\Groups({"publishDetails"})
+     * @var null|string
      */
     private $modifiedByUser;
 
     /**
-     * @ORM\Column(name="checked_out", type="datetime", nullable=true)
+     * @var null|\DateTime
      */
     private $checkedOut;
 
     /**
-     * @ORM\ManyToOne(targetEntity="Mautic\UserBundle\Entity\User")
-     * @ORM\JoinColumn(name="checked_out_by", referencedColumnName="id", nullable=true, onDelete="SET NULL")
+     * @var null|int
      */
     private $checkedOutBy;
 
     /**
-     * @ORM\Column(name="checked_out_by_user", type="string", nullable=true)
-     * @Serializer\Expose
-     * @Serializer\Since("1.0")
-     * @Serializer\Groups({"publishDetails"})
+     * @var null|string
      */
     private $checkedOutByUser;
 
@@ -105,6 +77,96 @@ class FormEntity extends CommonEntity
      * @var array
      */
     protected $changes = array();
+
+    /**
+     * @param ORM\ClassMetadata $metadata
+     */
+    public static function loadMetadata(ORM\ClassMetadata $metadata)
+    {
+        $builder = new ClassMetadataBuilder($metadata);
+
+        $builder->setMappedSuperClass();
+
+        $builder->createField('isPublished', 'boolean')
+            ->columnName('is_published')
+            ->build();
+
+        $builder->addDateAdded(true);
+
+        $builder->createField('createdBy', 'integer')
+            ->columnName('created_by')
+            ->nullable()
+            ->build();
+
+        $builder->createField('createdByUser', 'string')
+            ->columnName('created_by_user')
+            ->nullable()
+            ->build();
+
+        $builder->createField('dateModified', 'datetime')
+            ->columnName('date_modified')
+            ->nullable()
+            ->build();
+
+        $builder->createField('modifiedBy', 'integer')
+            ->columnName('modified_by')
+            ->nullable()
+            ->build();
+
+        $builder->createField('modifiedByUser', 'string')
+            ->columnName('modified_by_user')
+            ->nullable()
+            ->build();
+
+        $builder->createField('checkedOut', 'datetime')
+            ->columnName('checked_out')
+            ->nullable()
+            ->build();
+
+        $builder->createField('checkedOutBy', 'integer')
+            ->columnName('checked_out_by')
+            ->nullable()
+            ->build();
+
+        $builder->createField('checkedOutByUser', 'string')
+            ->columnName('checked_out_by_user')
+            ->nullable()
+            ->build();
+    }
+
+    /**
+     * Prepares the metadata for API usage
+     *
+     * @param $metadata
+     */
+    public static function loadApiMetadata(ApiMetadataDriver $metadata)
+    {
+        $metadata->setGroupPrefix('publish')
+            ->addProperties(
+                array(
+                    'isPublished',
+                    'dateAdded',
+                    'createdBy',
+                    'createdByUser',
+                    'dateModified',
+                    'modifiedBy',
+                    'modifiedByUser'
+                )
+            )
+            ->build();
+    }
+
+    /**
+     * Clear dates on clone
+     */
+    public function __clone()
+    {
+        $this->dateAdded    = null;
+        $this->dateModified = null;
+        $this->checkedOut   = null;
+        $this->isPublished  = false;
+        $this->changes      = array();
+    }
 
     /**
      * Check publish status with option to check against category, publish up and down dates
@@ -248,11 +310,15 @@ class FormEntity extends CommonEntity
      *
      * @return $this
      */
-    public function setCreatedBy(User $createdBy = null)
+    public function setCreatedBy($createdBy = null)
     {
-        $this->createdBy = $createdBy;
-        if ($createdBy != null) {
-            $this->createdByUser = $createdBy->getName();
+        if ($createdBy != null && !$createdBy instanceof User ) {
+            $this->createdBy = $createdBy;
+        } else {
+            $this->createdBy = ($createdBy != null) ? $createdBy->getId() : null;
+            if ($createdBy != null) {
+                $this->createdByUser = $createdBy->getName();
+            }
         }
 
         return $this;
@@ -275,12 +341,16 @@ class FormEntity extends CommonEntity
      *
      * @return mixed
      */
-    public function setModifiedBy(User $modifiedBy = null)
+    public function setModifiedBy($modifiedBy = null)
     {
-        $this->modifiedBy = $modifiedBy;
+        if ($modifiedBy != null && !$modifiedBy instanceof User ) {
+            $this->modifiedBy = $modifiedBy;
+        } else {
+            $this->modifiedBy = ($modifiedBy != null) ? $modifiedBy->getId() : null;
 
-        if ($modifiedBy != null) {
-            $this->modifiedByUser = $modifiedBy->getName();
+            if ($modifiedBy != null) {
+                $this->modifiedByUser = $modifiedBy->getName();
+            }
         }
 
         return $this;
@@ -303,12 +373,16 @@ class FormEntity extends CommonEntity
      *
      * @return mixed
      */
-    public function setCheckedOutBy(User $checkedOutBy = null)
+    public function setCheckedOutBy($checkedOutBy = null)
     {
-        $this->checkedOutBy = $checkedOutBy;
+        if ($checkedOutBy != null && !$checkedOutBy instanceof User ) {
+            $this->checkedOutBy = $checkedOutBy;
+        } else {
+            $this->checkedOutBy = ($checkedOutBy != null) ? $checkedOutBy->getId() : null;
 
-        if ($checkedOutBy != null) {
-            $this->checkedOutByUser = $checkedOutBy->getName();
+            if ($checkedOutBy != null) {
+                $this->checkedOutByUser = $checkedOutBy->getName();
+            }
         }
 
         return $this;
@@ -413,5 +487,29 @@ class FormEntity extends CommonEntity
     public function getModifiedByUser()
     {
         return $this->modifiedByUser;
+    }
+
+    /**
+     * @param mixed $createdByUser
+     */
+    public function setCreatedByUser($createdByUser)
+    {
+        $this->createdByUser = $createdByUser;
+    }
+
+    /**
+     * @param mixed $modifiedByUser
+     */
+    public function setModifiedByUser($modifiedByUser)
+    {
+        $this->modifiedByUser = $modifiedByUser;
+    }
+
+    /**
+     * @param mixed $checkedOutByUser
+     */
+    public function setCheckedOutByUser($checkedOutByUser)
+    {
+        $this->checkedOutByUser = $checkedOutByUser;
     }
 }

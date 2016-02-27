@@ -12,8 +12,8 @@ namespace Mautic\PointBundle\Form\Type;
 use Mautic\CoreBundle\Factory\MauticFactory;
 use Mautic\CoreBundle\Form\EventListener\CleanFormSubscriber;
 use Mautic\CoreBundle\Form\EventListener\FormExitSubscriber;
+use Mautic\PointBundle\Entity\Point;
 use Symfony\Component\Form\AbstractType;
-use Symfony\Component\Form\Extension\Core\ChoiceList\ChoiceList;
 use Symfony\Component\Form\FormBuilderInterface;
 use Symfony\Component\OptionsResolver\OptionsResolverInterface;
 
@@ -51,13 +51,13 @@ class PointType extends AbstractType
         $builder->addEventSubscriber(new FormExitSubscriber('point', $options));
 
         $builder->add('name', 'text', array(
-            'label'      => 'mautic.point.form.name',
+            'label'      => 'mautic.core.name',
             'label_attr' => array('class' => 'control-label'),
             'attr'       => array('class' => 'form-control')
         ));
 
         $builder->add('description', 'textarea', array(
-            'label'      => 'mautic.point.form.description',
+            'label'      => 'mautic.core.description',
             'label_attr' => array('class' => 'control-label'),
             'attr'       => array('class' => 'form-control editor'),
             'required'   => false
@@ -89,13 +89,14 @@ class PointType extends AbstractType
         if ($type) {
             $formType   =  (!empty($options['pointActions']['actions'][$type]['formType'])) ?
                 $options['pointActions']['actions'][$type]['formType'] : 'genericpoint_settings';
-
+            $properties = ($options['data']) ? $options['data']->getProperties() : array();
             $builder->add('properties', $formType, array(
-                'label' => false
+                'label' => false,
+                'data'  => $properties
             ));
         }
 
-        if (!empty($options['data']) && $options['data']->getId()) {
+        if (!empty($options['data']) && $options['data'] instanceof Point) {
             $readonly = !$this->security->hasEntityAccess(
                 'point:points:publishown',
                 'point:points:publishother',

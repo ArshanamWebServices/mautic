@@ -14,19 +14,16 @@ if ($tmpl == 'index')
     <table class="table table-hover table-striped table-bordered campaign-list" id="campaignTable">
         <thead>
             <tr>
-                <th class="visible-md visible-lg col-campaign-actions pl-20">
-                    <div class="checkbox-inline custom-primary">
-                        <label class="mb-0 pl-10">
-                            <input type="checkbox" id="customcheckbox-one0" value="1" data-toggle="checkall" data-target="#campaignTable">
-                            <span></span>
-                        </label>
-                    </div>
-                </th>
                 <?php
+                echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
+                    'checkall' => 'true',
+                    'target'   => '#campaignTable'
+                ));
+
                 echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                     'sessionVar' => 'campaign',
                     'orderBy'    => 'c.name',
-                    'text'       => 'mautic.campaign.thead.name',
+                    'text'       => 'mautic.core.name',
                     'class'      => 'col-campaign-name',
                     'default'    => true
                 ));
@@ -34,14 +31,14 @@ if ($tmpl == 'index')
                 echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                     'sessionVar' => 'campaign',
                     'orderBy'    => 'cat.title',
-                    'text'       => 'mautic.campaign.thead.category',
+                    'text'       => 'mautic.core.category',
                     'class'      => 'visible-md visible-lg col-campaign-category'
                 ));
 
                 echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                     'sessionVar' => 'campaign',
                     'orderBy'    => 'c.id',
-                    'text'       => 'mautic.campaign.thead.id',
+                    'text'       => 'mautic.core.id',
                     'class'      => 'visible-md visible-lg col-campaign-id'
                 ));
                 ?>
@@ -50,7 +47,7 @@ if ($tmpl == 'index')
         <tbody>
         <?php foreach ($items as $item): ?>
             <tr>
-                <td class="visible-md visible-lg">
+                <td>
                     <?php
                     echo $view->render('MauticCoreBundle:Helper:list_actions.html.php', array(
                         'item'      => $item,
@@ -81,8 +78,7 @@ if ($tmpl == 'index')
                     <?php $category = $item->getCategory(); ?>
                     <?php $catName  = ($category) ? $category->getTitle() : $view['translator']->trans('mautic.core.form.uncategorized'); ?>
                     <?php $color    = ($category) ? '#' . $category->getColor() : 'inherit'; ?>
-                    <span class="label label-default pa-5" style="background: <?php echo $color; ?>;"> </span>
-                    <span><?php echo $catName; ?></span>
+                    <span style="white-space: nowrap;"><span class="label label-default pa-4" style="border: 1px solid #d5d5d5; background: <?php echo $color; ?>;"> </span> <span><?php echo $catName; ?></span></span>
                 </td>
                 <td class="visible-md visible-lg"><?php echo $item->getId(); ?></td>
             </tr>

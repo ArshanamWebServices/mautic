@@ -29,11 +29,8 @@ class LeadNoteRepository extends CommonRepository
     {
         $q = $this
             ->createQueryBuilder('n')
-            ->select('n, a')
-            ->join('n.createdBy', 'a');
+            ->select('n');
         $args['qb'] = $q;
-
-
 
         return parent::getEntities($args);
     }
@@ -51,7 +48,7 @@ class LeadNoteRepository extends CommonRepository
     {
         $q = $this
             ->createQueryBuilder('n');
-        $q->select('count(n.id) as noteCount')
+        $q->select('count(n.id) as note_count')
             ->where($q->expr()->eq('IDENTITY(n.lead)', ':lead'))
             ->setParameter('lead', $leadId);
 
@@ -68,7 +65,7 @@ class LeadNoteRepository extends CommonRepository
         }
 
         $results = $q->getQuery()->getArrayResult();
-        return $results[0]['noteCount'];
+        return $results[0]['note_count'];
     }
 
     /**
@@ -163,4 +160,18 @@ class LeadNoteRepository extends CommonRepository
         );
     }
 
+    /**
+     * Updates lead ID (e.g. after a lead merge)
+     *
+     * @param $fromLeadId
+     * @param $toLeadId
+     */
+    public function updateLead($fromLeadId, $toLeadId)
+    {
+        $this->_em->getConnection()->createQueryBuilder()
+            ->update(MAUTIC_TABLE_PREFIX . 'lead_notes')
+            ->set('lead_id', (int)$toLeadId)
+            ->where('lead_id = ' . (int)$fromLeadId)
+            ->execute();
+    }
 }

@@ -12,8 +12,8 @@ namespace Mautic\AssetBundle\Controller;
 use Mautic\AssetBundle\Event\AssetEvent;
 use Mautic\CoreBundle\Controller\FormController as CommonFormController;
 use Mautic\AssetBundle\AssetEvents;
+use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 
 /**
  * Class PublicController
@@ -32,7 +32,7 @@ class PublicController extends CommonFormController
 
         /** @var \Mautic\AssetBundle\Model\AssetModel $model */
         $model      = $this->factory->getModel('asset.asset');
-        $translator = $this->get('translator');
+
         /** @var \Mautic\AssetBundle\Entity\Asset $entity */
         $entity     = $model->getEntityBySlugs($slug);
 
@@ -42,7 +42,8 @@ class PublicController extends CommonFormController
             //make sure the asset is published or deny access if not
             if ((!$published) && (!$security->hasEntityAccess('asset:assets:viewown', 'asset:assets:viewother', $entity->getCreatedBy()))) {
                 $model->trackDownload($entity, $this->request, 401);
-                throw new AccessDeniedHttpException($translator->trans('mautic.core.url.error.401'));
+
+                return $this->accessDenied();
             }
 
             //make sure URLs match up
@@ -70,29 +71,39 @@ class PublicController extends CommonFormController
                 $dispatcher->dispatch(AssetEvents::ASSET_ON_DOWNLOAD, $event);
             }
 
-            try {
-                //set the uploadDir
-                $entity->setUploadDir($this->factory->getParameter('upload_dir'));
-                $contents = $entity->getFileContents();
+            if ($entity->isRemote()) {
                 $model->trackDownload($entity, $this->request, 200);
-            } catch (\Exception $e) {
-                $model->trackDownload($entity, $this->request, 404);
-                throw $this->createNotFoundException($translator->trans('mautic.core.url.error.404'));
-            }
 
-            $response = new Response();
-            $response->headers->set('Content-Type', $entity->getFileMimeType());
+                // Redirect to remote URL
+                $response = new RedirectResponse($entity->getRemotePath());
+            } else {
+                try {
+                    //set the uploadDir
+                    $entity->setUploadDir($this->factory->getParameter('upload_dir'));
+                    $contents = $entity->getFileContents();
+                    $model->trackDownload($entity, $this->request, 200);
+                } catch (\Exception $e) {
+                    $model->trackDownload($entity, $this->request, 404);
 
-            $stream = $this->request->get('stream', 0);
-            if (!$stream) {
-                $response->headers->set('Content-Disposition', 'attachment;filename="' . $entity->getOriginalFileName());
+                    return $this->notFound();
+                }
+
+                $response = new Response();
+                $response->headers->set('Content-Type', $entity->getFileMimeType());
+
+                $stream = $this->request->get('stream', 0);
+                if (!$stream) {
+                    $response->headers->set('Content-Disposition', 'attachment;filename="'.$entity->getOriginalFileName());
+                }
+                $response->setContent($contents);
             }
-            $response->setContent($contents);
 
             return $response;
 
         }
+
         $model->trackDownload($entity, $this->request, 404);
-        throw $this->createNotFoundException($translator->trans('mautic.core.url.error.404'));
+
+        $this->notFound();
     }
 }

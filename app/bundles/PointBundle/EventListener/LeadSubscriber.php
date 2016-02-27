@@ -10,6 +10,8 @@
 namespace Mautic\PointBundle\EventListener;
 
 use Mautic\CoreBundle\EventListener\CommonSubscriber;
+use Mautic\LeadBundle\Event\LeadEvent;
+use Mautic\LeadBundle\Event\LeadMergeEvent;
 use Mautic\LeadBundle\Event\LeadTimelineEvent;
 use Mautic\LeadBundle\Event\PointsChangeEvent;
 use Mautic\LeadBundle\LeadEvents;
@@ -26,8 +28,10 @@ class LeadSubscriber extends CommonSubscriber
     static public function getSubscribedEvents()
     {
         return array(
-            LeadEvents::LEAD_POINTS_CHANGE => array('onLeadPointsChange', 0),
-            LeadEvents::TIMELINE_ON_GENERATE => array('onTimelineGenerate', 0)
+            LeadEvents::LEAD_POINTS_CHANGE   => array('onLeadPointsChange', 0),
+            LeadEvents::TIMELINE_ON_GENERATE => array('onTimelineGenerate', 0),
+            LeadEvents::LEAD_POST_MERGE      => array('onLeadMerge', 0),
+            LeadEvents::LEAD_POST_SAVE       => array('onLeadSave', -1)
         );
     }
 
@@ -41,6 +45,20 @@ class LeadSubscriber extends CommonSubscriber
         /** @var \Mautic\PointBundle\Model\TriggerModel */
         $model = $this->factory->getModel('point.trigger');
         $model->triggerEvents($event->getLead());
+    }
+
+    /**
+     * Handle point triggers for new leads (including 0 point triggers)
+     *
+     * @param LeadEvent $event
+     */
+    public function onLeadSave(LeadEvent $event)
+    {
+        if ($event->isNew()) {
+            /** @var \Mautic\PointBundle\Model\TriggerModel */
+            $model = $this->factory->getModel('point.trigger');
+            $model->triggerEvents($event->getLead());
+        }
     }
 
     /**
@@ -88,5 +106,22 @@ class LeadSubscriber extends CommonSubscriber
                 'contentTemplate' => 'MauticPointBundle:SubscribedEvents\Timeline:index.html.php'
             ));
         }
+    }
+
+    /**
+     * @param LeadChangeEvent $event
+     */
+    public function onLeadMerge(LeadMergeEvent $event)
+    {
+        $em = $this->factory->getEntityManager();
+        $em->getRepository('MauticPointBundle:LeadPointLog')->updateLead(
+            $event->getLoser()->getId(),
+            $event->getVictor()->getId()
+        );
+
+        $em->getRepository('MauticPointBundle:LeadTriggerLog')->updateLead(
+            $event->getLoser()->getId(),
+            $event->getVictor()->getId()
+        );
     }
 }

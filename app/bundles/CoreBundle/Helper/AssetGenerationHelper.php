@@ -24,11 +24,17 @@ class AssetGenerationHelper
     private $factory;
 
     /**
+     * @var
+     */
+    private $version;
+
+    /**
      * @param MauticFactory $factory
      */
     public function __construct(MauticFactory $factory)
     {
         $this->factory = $factory;
+        $this->version = $this->factory->getVersion();
     }
 
     /**
@@ -45,7 +51,7 @@ class AssetGenerationHelper
         if (empty($assets)) {
             $loadAll    = true;
             $env        = ($forceRegeneration) ? 'prod' : $this->factory->getEnvironment();
-            $rootPath   = $this->factory->getSystemPath('root');
+            $rootPath   = $this->factory->getSystemPath('assets_root');
             $assetsPath = $this->factory->getSystemPath('assets');
 
             $assetsFullPath = "$rootPath/$assetsPath";
@@ -171,12 +177,12 @@ class AssetGenerationHelper
                 //return prod generated assets
                 $assets = array(
                     'css' => array(
-                        "{$assetsPath}/css/libraries.css",
-                        "{$assetsPath}/css/app.css"
+                        "{$assetsPath}/css/libraries.css?v{$this->version}",
+                        "{$assetsPath}/css/app.css?v{$this->version}"
                     ),
                     'js'  => array(
-                        "{$assetsPath}/js/libraries.js",
-                        "{$assetsPath}/js/app.js"
+                        "{$assetsPath}/js/libraries.js?v{$this->version}",
+                        "{$assetsPath}/js/app.js?v{$this->version}"
                     )
                 );
             } else {
@@ -201,7 +207,7 @@ class AssetGenerationHelper
      */
     protected function findAssets($dir, $ext, $env, &$assets)
     {
-        $rootPath    = $this->factory->getSystemPath('root') . '/';
+        $rootPath    = str_replace('\\', '/', $this->factory->getSystemPath('assets_root') . '/');
         $directories = new Finder();
         $directories->directories()->exclude('*less')->depth('0')->ignoreDotFiles(true)->in($dir);
 
@@ -256,7 +262,7 @@ class AssetGenerationHelper
         $files->sort($sort);
 
         foreach ($files as $file) {
-            $fullPath = $file->getPathname();
+           	$fullPath = str_replace('\\', '/', $file->getPathname());
             $relPath  = str_replace($rootPath, '', $fullPath);
 
             $details = array(
@@ -289,8 +295,8 @@ class AssetGenerationHelper
      */
     protected function findOverrides($env, &$assets)
     {
-        $rootPath      = $this->factory->getSystemPath('root');
-        $currentTheme  = $this->factory->getSystemPath('currentTheme');
+        $rootPath      = $this->factory->getSystemPath('assets_root');
+        $currentTheme  = $this->factory->getSystemPath('current_theme');
         $modifiedLast  = array();
         $types         = array('css', 'js');
         $overrideFiles = array(

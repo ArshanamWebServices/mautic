@@ -12,45 +12,30 @@ namespace Mautic\ReportBundle\Controller;
 use Mautic\CoreBundle\Controller\AjaxController as CommonAjaxController;
 use Symfony\Component\HttpFoundation\Request;
 use Mautic\CoreBundle\Helper\InputHelper;
-use Mautic\ReportBundle\Event\ReportGraphEvent;
-use Mautic\ReportBundle\ReportEvents;
 
 /**
  * Class AjaxController
  */
 class AjaxController extends CommonAjaxController
 {
+
     /**
-     * Returns form HTML. Used for AJAX calls which modifies form field elements.
+     * Get updated data for context
      *
      * @param Request $request
      *
-     * @return HttpFoundation\JsonResponse|HttpFoundation\RedirectResponse|HttpFoundation\Response
+     * @return \Symfony\Component\HttpFoundation\JsonResponse|\Symfony\Component\HttpFoundation\Response
      */
-    public function getFormAction(Request $request)
+    public function getSourceDataAction(Request $request)
     {
         /* @type \Mautic\ReportBundle\Model\ReportModel $model */
         $model   = $this->factory->getModel('report');
-        $entity  = $model->getEntity();
-        $action  = $this->generateUrl('mautic_report_action', array('objectAction' => 'new'));
-        $form    = $model->createForm($entity, $this->get('form.factory'), $action);
-        $form->handleRequest($request);
+        $context = $request->get('context');
 
-        return $this->delegateView(array(
-            'viewParameters'  =>  array(
-                'report'      => $entity,
-                'form'        => $this->setFormTheme($form, 'MauticReportBundle:Report:form.html.php', 'MauticReportBundle:FormTheme\Report'),
-            ),
-            'contentTemplate' => 'MauticReportBundle:Report:form.html.php',
-            'passthroughVars' => array(
-                'activeLink'    => '#mautic_report_index',
-                'mauticContent' => 'report',
-                'route'         => $this->generateUrl('mautic_report_action', array(
-                    'objectAction' => 'edit',
-                    'objectId'     => $entity->getId()
-                ))
-            )
-        ));
+        list($list, $types) = $model->getColumnList($context, true);
+        $graphs             = $model->getGraphList($context, true);
+
+        return $this->sendJsonResponse(array('columns' => $list, 'types' => $types, 'graphs' => $graphs));
     }
 
     /**
@@ -59,7 +44,7 @@ class AjaxController extends CommonAjaxController
      */
     protected function updateGraphAction(Request $request)
     {
-        $reportId   = InputHelper::int($request->request->get('reportId'));
+        $reportId  = InputHelper::int($request->request->get('reportId'));
         $options   = InputHelper::clean($request->request->all());
         $dataArray = array('success' => 0);
 
@@ -67,11 +52,11 @@ class AjaxController extends CommonAjaxController
         $model    = $this->factory->getModel('report');
         $report   = $model->getEntity($reportId);
 
-        $event = new ReportGraphEvent($report);
-        $event->setOptions($options);
-        $this->factory->getDispatcher()->dispatch(ReportEvents::REPORT_ON_GRAPH_GENERATE, $event);
-        $dataArray['graph'] = $event->getGraphs();
-        $dataArray['success']  = 1;
+        $options['ignoreTableData'] = true;
+        $reportData = $model->getReportData($report, $this->container->get('form.factory'), $options);
+
+        $dataArray['graph']   = $reportData['graphs'][$options['graphName']]['data'];
+        $dataArray['success'] = 1;
 
         return $this->sendJsonResponse($dataArray);
     }

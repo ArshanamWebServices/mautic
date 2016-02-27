@@ -27,11 +27,11 @@ class ReportSubscriber extends CommonSubscriber
     /**
      * @return array
      */
-    static public function getSubscribedEvents()
+    static public function getSubscribedEvents ()
     {
         return array(
-            ReportEvents::REPORT_ON_BUILD    => array('onReportBuilder', 0),
-            ReportEvents::REPORT_ON_GENERATE => array('onReportGenerate', 0),
+            ReportEvents::REPORT_ON_BUILD          => array('onReportBuilder', 0),
+            ReportEvents::REPORT_ON_GENERATE       => array('onReportGenerate', 0),
             ReportEvents::REPORT_ON_GRAPH_GENERATE => array('onReportGraphGenerate', 0)
         );
     }
@@ -43,34 +43,113 @@ class ReportSubscriber extends CommonSubscriber
      *
      * @return void
      */
-    public function onReportBuilder(ReportBuilderEvent $event)
+    public function onReportBuilder (ReportBuilderEvent $event)
     {
-        $metadataLead = $this->factory->getEntityManager()->getClassMetadata('Mautic\\LeadBundle\\Entity\\Lead');
-        $metadataPoint = $this->factory->getEntityManager()->getClassMetadata('Mautic\\LeadBundle\\Entity\\PointsChangeLog');
-        $leadFields = $metadataLead->getFieldNames();
-        $pointFields = $metadataPoint->getFieldNames();
+        if ($event->checkContext(array('leads', 'lead.pointlog'))) {
+            $prefix     = 'l.';
+            $userPrefix = 'u.';
+            $columns    = array(
+                $prefix . 'date_identified' => array(
+                    'label' => 'mautic.lead.report.date_identified',
+                    'type'  => 'datetime'
+                ),
+                $prefix . 'points'          => array(
+                    'label' => 'mautic.lead.points',
+                    'type'  => 'int'
+                ),
+                $prefix . 'owner_id'        => array(
+                    'label' => 'mautic.lead.report.owner_id',
+                    'type'  => 'int'
+                ),
+                $userPrefix . 'first_name'  => array(
+                    'label' => 'mautic.lead.report.owner_firstname',
+                    'type'  => 'string'
+                ),
+                $userPrefix . 'last_name'   => array(
+                    'label' => 'mautic.lead.report.owner_lastname',
+                    'type'  => 'string'
+                )
+            );
 
-        // Unset point change log id
-        unset($pointFields[0]);
+            /** @var \Mautic\LeadBundle\Model\FieldModel $model */
+            $model        = $this->factory->getModel('lead.field');
+            $leadFields   = $model->getEntities();
+            $fieldColumns = array();
+            foreach ($leadFields as $f) {
+                switch ($f->getType()) {
+                    case 'boolean':
+                        $type = 'bool';
+                        break;
+                    case 'date':
+                    case 'datetime':
+                    case 'time':
+                        $type = 'datetime';
+                        break;
+                    case 'url':
+                        $type = 'url';
+                        break;
+                    case 'email':
+                        $type = 'email';
+                        break;
+                    default:
+                        $type = 'string';
+                        break;
+                }
+                $fieldColumns[$prefix . $f->getAlias()] = array(
+                    'label' => $f->getLabel(),
+                    'type'  => $type
+                );
+            }
+            $columns = array_merge($columns, $fieldColumns);
+            $data = array(
+                'display_name' => 'mautic.lead.leads',
+                'columns'      => $columns
+            );
+            $event->addTable('leads', $data);
 
-        $columns  = array();
+            // Add graphs
+            $event->addGraph('leads', 'line', 'mautic.lead.graph.line.leads');
 
-        foreach ($leadFields as $field) {
-            $fieldData = $metadataLead->getFieldMapping($field);
-            $columns['l.' . $fieldData['columnName']] = array('label' => $field, 'type' => $fieldData['type']);
+            if ($event->checkContext('lead.pointlog')) {
+                $pointPrefix  = 'lp.';
+                $pointColumns = array(
+                    $pointPrefix . 'type'        => array(
+                        'label' => 'mautic.lead.report.points.type',
+                        'type'  => 'string'
+                    ),
+                    $pointPrefix . 'event_name'  => array(
+                        'label' => 'mautic.lead.report.points.event_name',
+                        'type'  => 'string'
+                    ),
+                    $pointPrefix . 'action_name' => array(
+                        'label' => 'mautic.lead.report.points.action_name',
+                        'type'  => 'string'
+                    ),
+                    $pointPrefix . 'delta'       => array(
+                        'label' => 'mautic.lead.report.points.delta',
+                        'type'  => 'int'
+                    ),
+                    $pointPrefix . 'date_added'  => array(
+                        'label' => 'mautic.lead.report.points.date_added',
+                        'type'  => 'datetime'
+                    )
+                );
+                $data         = array(
+                    'display_name' => 'mautic.lead.report.points.table',
+                    'columns'      => array_merge($columns, $pointColumns, $event->getIpColumn())
+                );
+                $event->addTable('lead.pointlog', $data);
+
+                // Register graphs
+                $context = 'lead.pointlog';
+                $event->addGraph($context, 'line', 'mautic.lead.graph.line.points');
+                $event->addGraph($context, 'table', 'mautic.lead.table.most.points');
+                $event->addGraph($context, 'table', 'mautic.lead.table.top.countries');
+                $event->addGraph($context, 'table', 'mautic.lead.table.top.cities');
+                $event->addGraph($context, 'table', 'mautic.lead.table.top.events');
+                $event->addGraph($context, 'table', 'mautic.lead.table.top.actions');
+            }
         }
-
-        foreach ($pointFields as $field) {
-            $fieldData = $metadataPoint->getFieldMapping($field);
-            $columns['lp.' . $fieldData['columnName']] = array('label' => $field, 'type' => $fieldData['type']);
-        }
-
-        $data = array(
-            'display_name' => 'mautic.lead.lead.report.table',
-            'columns'      => $columns
-        );
-
-        $event->addTable('leads', $data);
     }
 
     /**
@@ -80,152 +159,177 @@ class ReportSubscriber extends CommonSubscriber
      *
      * @return void
      */
-    public function onReportGenerate(ReportGeneratorEvent $event)
+    public function onReportGenerate (ReportGeneratorEvent $event)
     {
-        // Context check, we only want to fire for Lead reports
-        if ($event->getContext() != 'leads')
-        {
-            return;
+        $context = $event->getContext();
+        if ($context == 'leads') {
+            $qb = $this->factory->getEntityManager()->getConnection()->createQueryBuilder();
+
+            $qb->from(MAUTIC_TABLE_PREFIX . 'leads', 'l');
+            $qb->leftJoin('l', MAUTIC_TABLE_PREFIX . 'users', 'u', 'u.id = l.owner_id');
+
+            $event->setQueryBuilder($qb);
+        } elseif ($context == 'lead.pointlog') {
+            $qb = $this->factory->getEntityManager()->getConnection()->createQueryBuilder();
+
+            $qb->from(MAUTIC_TABLE_PREFIX . 'lead_points_change_log', 'lp')
+                ->leftJoin('lp', MAUTIC_TABLE_PREFIX . 'leads', 'l', 'l.id = lp.lead_id')
+                ->leftJoin('l', MAUTIC_TABLE_PREFIX . 'users', 'u', 'u.id = l.owner_id');
+            $event->addIpAddressLeftJoin($qb, 'lp');
+
+            $event->setQueryBuilder($qb);
         }
-
-        $queryBuilder = $this->factory->getEntityManager()->getConnection()->createQueryBuilder();
-
-        $queryBuilder->from(MAUTIC_TABLE_PREFIX . 'leads', 'l');
-        $queryBuilder->leftJoin('l', MAUTIC_TABLE_PREFIX . 'lead_points_change_log', 'lp', 'l.id = lp.lead_id');
-
-        $event->setQueryBuilder($queryBuilder);
     }
 
     /**
      * Initialize the QueryBuilder object to generate reports from
      *
-     * @param ReportGeneratorEvent $event
+     * @param ReportGraphEvent $event
      *
      * @return void
      */
-    public function onReportGraphGenerate(ReportGraphEvent $event)
+    public function onReportGraphGenerate (ReportGraphEvent $event)
     {
-        $report = $event->getReport();
         // Context check, we only want to fire for Lead reports
-        if ($report->getSource() != 'leads')
-        {
+        if (!$event->checkContext(array('leads', 'lead.pointlog'))) {
             return;
         }
 
-        $options = $event->getOptions();
+        $graphs       = $event->getRequestedGraphs();
+        $qb           = $event->getQueryBuilder();
         $pointLogRepo = $this->factory->getEntityManager()->getRepository('MauticLeadBundle:PointsChangeLog');
 
-        if (!$options || isset($options['graphName']) && $options['graphName'] == 'mautic.lead.graph.line.points') {
-            // Generate data for points line graph
-            $unit = 'D';
-            $amount = 30;
+        foreach ($graphs as $g) {
+            $options      = $event->getOptions($g);
+            $queryBuilder = clone $qb;
 
-            if (isset($options['amount'])) {
-                $amount = $options['amount'];
+            switch ($g) {
+                case 'mautic.lead.graph.line.leads':
+                    // Generate data for leads line graph
+                    $unit = 'D';
+                    $amount = 30;
+
+                    if (isset($options['amount'])) {
+                        $amount = $options['amount'];
+                    }
+
+                    if (isset($options['unit'])) {
+                        $unit = $options['unit'];
+                    }
+
+                    $timeStats = GraphHelper::prepareDatetimeLineGraphData($amount, $unit, array('leads', 'emails'));
+                    $queryBuilder->select('l.id as lead, l.date_added as "dateAdded", LENGTH(l.email) > 0 as email');
+                    $queryBuilder->andwhere($queryBuilder->expr()->gte('l.date_added', ':date'))
+                        ->setParameter('date', $timeStats['fromDate']->format('Y-m-d H:i:s'));
+                    $leads = $queryBuilder->execute()->fetchAll();
+
+                    $timeStats = GraphHelper::mergeLineGraphData($timeStats, $leads, $unit, 0, 'dateAdded');
+                    $timeStats = GraphHelper::mergeLineGraphData($timeStats, $leads, $unit, 1, 'dateAdded', 'email');
+                    $timeStats['name'] = 'mautic.lead.graph.line.leads';
+                    $event->setGraph($g, $timeStats);
+                    break;
+
+                case 'mautic.lead.graph.line.points':
+
+                    // Generate data for points line graph
+                    $unit   = 'D';
+                    $amount = 30;
+
+                    if (isset($options['amount'])) {
+                        $amount = $options['amount'];
+                    }
+
+                    if (isset($options['unit'])) {
+                        $unit = $options['unit'];
+                    }
+
+                    $timeStats = GraphHelper::prepareDatetimeLineGraphData($amount, $unit, array('points'));
+
+                    $queryBuilder->select('lp.lead_id as lead, lp.date_added as dateAdded, lp.delta');
+                    $queryBuilder->andwhere($queryBuilder->expr()->gte('lp.date_added', ':date'))
+                        ->setParameter('date', $timeStats['fromDate']->format('Y-m-d H:i:s'));
+                    $points = $queryBuilder->execute()->fetchAll();
+
+                    $timeStats         = GraphHelper::mergeLineGraphData($timeStats, $points, $unit, 0, 'dateAdded', 'delta');
+                    $timeStats['name'] = 'mautic.lead.graph.line.points';
+
+                    $event->setGraph($g, $timeStats);
+                    break;
+
+                case 'mautic.lead.table.most.points':
+                    $queryBuilder->select('l.id, l.email as title, sum(lp.delta) as points')
+                        ->groupBy('l.id, l.email')
+                        ->orderBy('points', 'DESC');
+                    $limit                  = 10;
+                    $offset                 = 0;
+                    $items                  = $pointLogRepo->getMostPoints($queryBuilder, $limit, $offset);
+                    $graphData              = array();
+                    $graphData['data']      = $items;
+                    $graphData['name']      = 'mautic.lead.table.most.points';
+                    $graphData['iconClass'] = 'fa-asterisk';
+                    $graphData['link']      = 'mautic_lead_action';
+                    $event->setGraph($g, $graphData);
+                    break;
+
+                case 'mautic.lead.table.top.countries':
+                    $queryBuilder->select('l.country as title, count(l.country) as quantity')
+                        ->groupBy('l.country')
+                        ->orderBy('quantity', 'DESC');
+                    $limit  = 10;
+                    $offset = 0;
+
+                    $items                  = $pointLogRepo->getMostLeads($queryBuilder, $limit, $offset);
+                    $graphData              = array();
+                    $graphData['data']      = $items;
+                    $graphData['name']      = 'mautic.lead.table.top.countries';
+                    $graphData['iconClass'] = 'fa-globe';
+                    $event->setGraph($g, $graphData);
+                    break;
+
+                case 'mautic.lead.table.top.cities':
+                    $queryBuilder->select('l.city as title, count(l.city) as quantity')
+                        ->groupBy('l.city')
+                        ->orderBy('quantity', 'DESC');
+                    $limit  = 10;
+                    $offset = 0;
+
+                    $items                  = $pointLogRepo->getMostLeads($queryBuilder, $limit, $offset);
+                    $graphData              = array();
+                    $graphData['data']      = $items;
+                    $graphData['name']      = 'mautic.lead.table.top.cities';
+                    $graphData['iconClass'] = 'fa-university';
+                    $event->setGraph($g, $graphData);
+                    break;
+
+                case 'mautic.lead.table.top.events':
+                    $queryBuilder->select('lp.event_name as title, count(lp.event_name) as events')
+                        ->groupBy('lp.event_name')
+                        ->orderBy('events', 'DESC');
+                    $limit                  = 10;
+                    $offset                 = 0;
+                    $items                  = $pointLogRepo->getMostPoints($queryBuilder, $limit, $offset);
+                    $graphData              = array();
+                    $graphData['data']      = $items;
+                    $graphData['name']      = 'mautic.lead.table.top.events';
+                    $graphData['iconClass'] = 'fa-calendar';
+                    $event->setGraph($g, $graphData);
+                    break;
+
+                case 'mautic.lead.table.top.actions':
+                    $queryBuilder->select('lp.action_name as title, count(lp.action_name) as actions')
+                        ->groupBy('lp.action_name')
+                        ->orderBy('actions', 'DESC');
+                    $limit                  = 10;
+                    $offset                 = 0;
+                    $items                  = $pointLogRepo->getMostPoints($queryBuilder, $limit, $offset);
+                    $graphData              = array();
+                    $graphData['data']      = $items;
+                    $graphData['name']      = 'mautic.lead.table.top.actions';
+                    $graphData['iconClass'] = 'fa-bolt';
+                    $event->setGraph($g, $graphData);
+                    break;
             }
-
-            if (isset($options['unit'])) {
-                $unit = $options['unit'];
-            }
-
-            $timeStats = GraphHelper::prepareDatetimeLineGraphData($amount, $unit, array('points'));
-
-            $queryBuilder = $this->factory->getEntityManager()->getConnection()->createQueryBuilder();
-            $queryBuilder->from(MAUTIC_TABLE_PREFIX . 'lead_points_change_log', 'lp');
-            $queryBuilder->leftJoin('lp', MAUTIC_TABLE_PREFIX . 'leads', 'l', 'l.id = lp.lead_id');
-            $queryBuilder->select('lp.lead_id as lead, lp.date_added as dateAdded, lp.delta');
-            $event->buildWhere($queryBuilder);
-            $queryBuilder->andwhere($queryBuilder->expr()->gte('lp.date_added', ':date'))
-                ->setParameter('date', $timeStats['fromDate']->format('Y-m-d H:i:s'));
-            $points = $queryBuilder->execute()->fetchAll();
-
-            $timeStats = GraphHelper::mergeLineGraphData($timeStats, $points, $unit, 0, 'dateAdded', 'delta');
-            $timeStats['name'] = 'mautic.lead.graph.line.points';
-
-            $event->setGraph('line', $timeStats);
-        }
-
-        if (!$options || isset($options['graphName']) && $options['graphName'] == 'mautic.lead.table.most.points') {
-            $queryBuilder = $this->factory->getEntityManager()->getConnection()->createQueryBuilder();
-            $event->buildWhere($queryBuilder);
-            $queryBuilder->select('l.id, l.email as title, sum(lp.delta) as points')
-                ->groupBy('l.id')
-                ->orderBy('points', 'DESC');
-            $limit = 10;
-            $offset = 0;
-            $items = $pointLogRepo->getMostPoints($queryBuilder, $limit, $offset);
-            $graphData = array();
-            $graphData['data'] = $items;
-            $graphData['name'] = 'mautic.lead.table.most.points';
-            $graphData['iconClass'] = 'fa-asterisk';
-            $graphData['link'] = 'mautic_lead_action';
-            $event->setGraph('table', $graphData);
-        }
-
-        if (!$options || isset($options['graphName']) && $options['graphName'] == 'mautic.lead.table.top.countries') {
-            $queryBuilder = $this->factory->getEntityManager()->getConnection()->createQueryBuilder();
-            $event->buildWhere($queryBuilder);
-            $queryBuilder->select('l.country as title, count(l.country) as quantity')
-                ->groupBy('l.country')
-                ->orderBy('quantity', 'DESC');
-            $limit = 10;
-            $offset = 0;
-
-            $items = $pointLogRepo->getMostLeads($queryBuilder, $limit, $offset);
-            $graphData = array();
-            $graphData['data'] = $items;
-            $graphData['name'] = 'mautic.lead.table.top.countries';
-            $graphData['iconClass'] = 'fa-globe';
-            $event->setGraph('table', $graphData);
-        }
-
-        if (!$options || isset($options['graphName']) && $options['graphName'] == 'mautic.lead.table.top.cities') {
-            $queryBuilder = $this->factory->getEntityManager()->getConnection()->createQueryBuilder();
-            $event->buildWhere($queryBuilder);
-            $queryBuilder->select('l.city as title, count(l.city) as quantity')
-                ->groupBy('l.city')
-                ->orderBy('quantity', 'DESC');
-            $limit = 10;
-            $offset = 0;
-
-            $items = $pointLogRepo->getMostLeads($queryBuilder, $limit, $offset);
-            $graphData = array();
-            $graphData['data'] = $items;
-            $graphData['name'] = 'mautic.lead.table.top.cities';
-            $graphData['iconClass'] = 'fa-university';
-            $event->setGraph('table', $graphData);
-        }
-
-        if (!$options || isset($options['graphName']) && $options['graphName'] == 'mautic.lead.table.top.events') {
-            $queryBuilder = $this->factory->getEntityManager()->getConnection()->createQueryBuilder();
-            $event->buildWhere($queryBuilder);
-            $queryBuilder->select('lp.event_name as title, count(lp.event_name) as events')
-                ->groupBy('lp.event_name')
-                ->orderBy('events', 'DESC');
-            $limit = 10;
-            $offset = 0;
-            $items = $pointLogRepo->getMostPoints($queryBuilder, $limit, $offset);
-            $graphData = array();
-            $graphData['data'] = $items;
-            $graphData['name'] = 'mautic.lead.table.top.events';
-            $graphData['iconClass'] = 'fa-calendar';
-            $event->setGraph('table', $graphData);
-        }
-
-        if (!$options || isset($options['graphName']) && $options['graphName'] == 'mautic.lead.table.top.actions') {
-            $queryBuilder = $this->factory->getEntityManager()->getConnection()->createQueryBuilder();
-            $event->buildWhere($queryBuilder);
-            $queryBuilder->select('lp.action_name as title, count(lp.action_name) as actions')
-                ->groupBy('lp.action_name')
-                ->orderBy('actions', 'DESC');
-            $limit = 10;
-            $offset = 0;
-            $items = $pointLogRepo->getMostPoints($queryBuilder, $limit, $offset);
-            $graphData = array();
-            $graphData['data'] = $items;
-            $graphData['name'] = 'mautic.lead.table.top.actions';
-            $graphData['iconClass'] = 'fa-bolt';
-            $event->setGraph('table', $graphData);
+            unset($queryBuilder);
         }
     }
 }

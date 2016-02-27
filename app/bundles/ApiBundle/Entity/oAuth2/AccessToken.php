@@ -9,43 +9,93 @@
 
 namespace Mautic\ApiBundle\Entity\oAuth2;
 
-use FOS\OAuthServerBundle\Entity\AccessToken as BaseAccessToken;
+use FOS\OAuthServerBundle\Model\AccessToken as BaseAccessToken;
 use Doctrine\ORM\Mapping as ORM;
+use Mautic\CoreBundle\Doctrine\Mapping\ClassMetadataBuilder;
 use Symfony\Component\Security\Core\User\UserInterface;
 use FOS\OAuthServerBundle\Model\ClientInterface;
 
 /**
- * @ORM\Table(name="oauth2_accesstokens")
- * @ORM\Entity
+ * Class AccessToken
+ *
+ * @package Mautic\ApiBundle\Entity\oAuth2
  */
 class AccessToken extends BaseAccessToken
 {
 
     /**
-     * @ORM\Id
-     * @ORM\Column(type="integer")
-     * @ORM\GeneratedValue(strategy="AUTO")
+     * @var int
      */
     protected $id;
 
     /**
-     * @ORM\ManyToOne(targetEntity="Client")
-     * @ORM\JoinColumn(name="client_id", referencedColumnName="id", nullable=false, onDelete="CASCADE")
+     * @var Client
      */
     protected $client;
 
     /**
-     * @ORM\ManyToOne(targetEntity="Mautic\UserBundle\Entity\User")
-     * @ORM\JoinColumn(name="user_id", referencedColumnName="id", nullable=false, onDelete="CASCADE")
+     * @var \Mautic\UserBundle\Entity\User
      */
     protected $user;
+
+    /**
+     * @var string
+     */
+    protected $token;
+
+    /**
+     * @var int
+     */
+    protected $expiresAt;
+
+    /**
+     * @var string
+     */
+    protected $scope;
+
+    /**
+     * @param ORM\ClassMetadata $metadata
+     */
+    public static function loadMetadata (ORM\ClassMetadata $metadata)
+    {
+        $builder = new ClassMetadataBuilder($metadata);
+
+        $builder->setTable('oauth2_accesstokens')
+            ->addIndex(array('token'), 'oauth2_access_token_search');
+
+        $builder->createField('id', 'integer')
+            ->isPrimaryKey()
+            ->generatedValue()
+            ->build();
+
+        $builder->createManyToOne('client', 'Client')
+            ->addJoinColumn('client_id', 'id', false, false, 'CASCADE')
+            ->build();
+
+        $builder->createManyToOne('user', 'Mautic\UserBundle\Entity\User')
+            ->addJoinColumn('user_id', 'id', false, false, 'CASCADE')
+            ->build();
+
+        $builder->createField('token', 'string')
+            ->unique()
+            ->build();
+
+        $builder->createField('expiresAt', 'bigint')
+            ->columnName('expires_at')
+            ->nullable()
+            ->build();
+
+        $builder->createField('scope', 'string')
+            ->nullable()
+            ->build();
+    }
 
     /**
      * Get id
      *
      * @return integer
      */
-    public function getId()
+    public function getId ()
     {
         return $this->id;
     }
@@ -57,7 +107,7 @@ class AccessToken extends BaseAccessToken
      *
      * @return AccessToken
      */
-    public function setClient(ClientInterface $client)
+    public function setClient (ClientInterface $client)
     {
         $this->client = $client;
 
@@ -69,7 +119,7 @@ class AccessToken extends BaseAccessToken
      *
      * @return ClientInterface
      */
-    public function getClient()
+    public function getClient ()
     {
         return $this->client;
     }
@@ -81,7 +131,7 @@ class AccessToken extends BaseAccessToken
      *
      * @return AccessToken
      */
-    public function setUser(UserInterface $user = null)
+    public function setUser (UserInterface $user = null)
     {
         $this->user = $user;
 
@@ -93,7 +143,7 @@ class AccessToken extends BaseAccessToken
      *
      * @return UserInterface
      */
-    public function getUser()
+    public function getUser ()
     {
         return $this->user;
     }

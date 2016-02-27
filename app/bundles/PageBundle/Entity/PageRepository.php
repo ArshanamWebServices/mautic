@@ -9,6 +9,8 @@
 
 namespace Mautic\PageBundle\Entity;
 
+use Doctrine\DBAL\Query\Expression\ExpressionBuilder;
+use Doctrine\ORM\Query\Expr;
 use Doctrine\ORM\Tools\Pagination\Paginator;
 use Mautic\CoreBundle\Entity\CommonRepository;
 
@@ -28,16 +30,9 @@ class PageRepository extends CommonRepository
             ->select('p')
             ->leftJoin('p.category', 'c');
 
-        $this->buildClauses($q, $args);
+        $args['qb'] = $q;
 
-        $query = $q->getQuery();
-
-        if (isset($args['hydration_mode'])) {
-            $mode = strtoupper($args['hydration_mode']);
-            $query->setHydrationMode(constant("\\Doctrine\\ORM\\Query::$mode"));
-        }
-
-        return new Paginator($query);
+        return parent::getEntities($args);
     }
 
     /**
@@ -49,16 +44,17 @@ class PageRepository extends CommonRepository
      */
     public function getPopularPages($limit = 10)
     {
-        $q  = $this->_em->getConnection()->createQueryBuilder();
+        $q  = $this->createQueryBuilder('p');
 
-        $q->select('count(h.id) as hits, p.id AS page_id, p.title, h.url')
-            ->from(MAUTIC_TABLE_PREFIX.'page_hits', 'h')
-            ->leftJoin('h', MAUTIC_TABLE_PREFIX.'pages', 'p', 'h.page_id = p.id')
-            ->orderBy('hits', 'DESC')
-            ->groupBy('p.id')
+        $q->select("partial p.{id, title, hits, alias}")
+            ->orderBy('p.hits', 'DESC')
+            ->where('p.hits > 0')
             ->setMaxResults($limit);
 
-        return $q->execute()->fetchAll();
+        $expr = $this->getPublishedByDateExpression($q, 'p');
+        $q->andWhere($expr);
+
+        return $q->getQuery()->getResult();
     }
 
     /**
@@ -70,7 +66,7 @@ class PageRepository extends CommonRepository
     public function checkUniqueAlias($alias, $entity = null)
     {
         $q = $this->createQueryBuilder('e')
-            ->select('count(e.id) as aliasCount')
+            ->select('count(e.id) as alias_count')
             ->where('e.alias = :alias');
         $q->setParameter('alias', $alias);
 
@@ -119,7 +115,7 @@ class PageRepository extends CommonRepository
 
         $results = $q->getQuery()->getSingleResult();
 
-        return $results['aliasCount'];
+        return $results['alias_count'];
     }
 
     /**
@@ -143,7 +139,7 @@ class PageRepository extends CommonRepository
         }
 
         if (!$viewOther) {
-            $q->andWhere($q->expr()->eq('IDENTITY(p.createdBy)', ':id'))
+            $q->andWhere($q->expr()->eq('p.createdBy', ':id'))
                 ->setParameter('id', $this->currentUser->getId());
         }
 
@@ -197,30 +193,27 @@ class PageRepository extends CommonRepository
     protected function addSearchCommandWhereClause(&$q, $filter)
     {
         $command         = $filter->command;
-        $string          = $filter->string;
         $unique          = $this->generateRandomParameterName();
         $returnParameter = true; //returning a parameter that is not used will lead to a Doctrine error
         $expr            = false;
         switch ($command) {
-            case $this->translator->trans('mautic.core.searchcommand.is'):
-                switch($string) {
-                    case $this->translator->trans('mautic.core.searchcommand.ispublished'):
-                        $expr = $q->expr()->eq("p.isPublished", 1);
-                        break;
-                    case $this->translator->trans('mautic.core.searchcommand.isunpublished'):
-                        $expr = $q->expr()->eq("p.isPublished", 0);
-                        break;
-                    case $this->translator->trans('mautic.core.searchcommand.isuncategorized'):
-                        $expr = $q->expr()->orX(
-                            $q->expr()->isNull('p.category'),
-                            $q->expr()->eq('p.category', $q->expr()->literal(''))
-                        );
-                        break;
-                    case $this->translator->trans('mautic.core.searchcommand.ismine'):
-                        $expr = $q->expr()->eq("IDENTITY(p.createdBy)", $this->currentUser->getId());
-                        break;
-
-                }
+            case $this->translator->trans('mautic.core.searchcommand.ispublished'):
+                $expr = $q->expr()->eq("p.isPublished", ":$unique");
+                $forceParameters = array($unique => true);
+                break;
+            case $this->translator->trans('mautic.core.searchcommand.isunpublished'):
+                $expr = $q->expr()->eq("p.isPublished", ":$unique");
+                $forceParameters = array($unique => false);
+                break;
+            case $this->translator->trans('mautic.core.searchcommand.isuncategorized'):
+                $expr = $q->expr()->orX(
+                    $q->expr()->isNull('p.category'),
+                    $q->expr()->eq('p.category', $q->expr()->literal(''))
+                );
+                $returnParameter = false;
+                break;
+            case $this->translator->trans('mautic.core.searchcommand.ismine'):
+                $expr = $q->expr()->eq("IDENTITY(p.createdBy)", $this->currentUser->getId());
                 $returnParameter = false;
                 break;
             case $this->translator->trans('mautic.core.searchcommand.category'):
@@ -263,12 +256,10 @@ class PageRepository extends CommonRepository
     public function getSearchCommands()
     {
         return array(
-            'mautic.core.searchcommand.is' => array(
-                'mautic.core.searchcommand.ispublished',
-                'mautic.core.searchcommand.isunpublished',
-                'mautic.core.searchcommand.isuncategorized',
-                'mautic.core.searchcommand.ismine',
-            ),
+            'mautic.core.searchcommand.ispublished',
+            'mautic.core.searchcommand.isunpublished',
+            'mautic.core.searchcommand.isuncategorized',
+            'mautic.core.searchcommand.ismine',
             'mautic.core.searchcommand.category',
             'mautic.core.searchcommand.lang'
         );
@@ -290,5 +281,62 @@ class PageRepository extends CommonRepository
     public function getTableAlias()
     {
         return 'p';
+    }
+
+    /**
+     * Null variant and translation parent
+     *
+     * @param $ids
+     */
+    public function nullParents($ids)
+    {
+        if (!is_array($ids)) {
+            $ids = array($ids);
+        }
+
+        $qb = $this->_em->getConnection()->createQueryBuilder();
+        $qb->update(MAUTIC_TABLE_PREFIX . 'pages')
+            ->set('variant_parent_id', ':null')
+            ->setParameter('null', null)
+            ->where(
+                $qb->expr()->in('variant_parent_id', $ids)
+            )
+            ->execute();
+
+        $qb = $this->_em->getConnection()->createQueryBuilder();
+        $qb->update(MAUTIC_TABLE_PREFIX . 'pages')
+            ->set('translation_parent_id', ':null')
+            ->setParameter('null', null)
+            ->where(
+                $qb->expr()->in('translation_parent_id', $ids)
+            )
+            ->execute();
+    }
+
+    /**
+     * Up the hit count
+     *
+     * @param            $id
+     * @param int        $increaseBy
+     * @param bool|false $unique
+     * @param bool|false $variant
+     */
+    public function upHitCount($id, $increaseBy = 1, $unique = false, $variant = false)
+    {
+        $q = $this->_em->getConnection()->createQueryBuilder();
+
+        $q->update(MAUTIC_TABLE_PREFIX.'pages')
+            ->set('hits', 'hits + ' . (int) $increaseBy)
+            ->where('id = ' . (int) $id);
+
+        if ($unique) {
+            $q->set('unique_hits', 'unique_hits + ' . (int) $increaseBy);
+        }
+
+        if ($variant) {
+            $q->set('variant_hits', 'variant_hits + ' . (int) $increaseBy);
+        }
+
+        $q->execute();
     }
 }

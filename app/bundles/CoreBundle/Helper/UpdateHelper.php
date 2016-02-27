@@ -36,8 +36,7 @@ class UpdateHelper
         $this->factory = $factory;
 
         $options = array('transport.curl' => array(
-            CURLOPT_SSLVERSION      => 1,
-            CURLOPT_SSL_CIPHER_LIST => 'TLSv1',
+            CURLOPT_SSL_VERIFYPEER  => false
         ));
 
         $this->connector = HttpFactory::getHttp($options);
@@ -56,6 +55,9 @@ class UpdateHelper
         try {
             $data = $this->connector->get($package);
         } catch (\Exception $exception) {
+            $logger = $this->factory->getLogger();
+            $logger->addError('An error occurred while attempting to fetch the package: ' . $exception->getMessage());
+
             return array(
                 'error'   => true,
                 'message' => 'mautic.core.updater.error.fetching.package'
@@ -111,15 +113,16 @@ class UpdateHelper
             $instanceId = hash('sha1', $this->factory->getParameter('secret_key') . 'Mautic' . $this->factory->getParameter('db_driver'));
 
             $data = array(
-                'application' => 'Mautic',
-                'version'     => $this->factory->getVersion(),
-                'phpVersion'  => PHP_VERSION,
-                'dbDriver'    => $this->factory->getParameter('db_driver'),
-                'serverOs'    => php_uname('s') . ' ' . php_uname('r'),
-                'instanceId'  => $instanceId
+                'application'   => 'Mautic',
+                'version'       => $this->factory->getVersion(),
+                'phpVersion'    => PHP_VERSION,
+                'dbDriver'      => $this->factory->getParameter('db_driver'),
+                'serverOs'      => php_uname('s') . ' ' . php_uname('r'),
+                'instanceId'    => $instanceId,
+                'installSource' => $this->factory->getParameter('install_source', 'Mautic')
             );
 
-            $this->connector->post('https://updates.mautic.org/stats/send', $data);
+            $this->connector->post('https://updates.mautic.org/stats/send', $data, null, 10);
         } catch (\Exception $exception) {
             // Not so concerned about failures here, move along
         }
@@ -132,9 +135,13 @@ class UpdateHelper
                 'stability'  => $this->factory->getParameter('update_stability')
             );
 
-            $data    = $this->connector->post('https://updates.mautic.org/index.php?option=com_mauticdownload&task=checkUpdates', $appData);
+            $data    = $this->connector->post('https://updates.mautic.org/index.php?option=com_mauticdownload&task=checkUpdates', $appData, null, 10);
             $update  = json_decode($data->body);
         } catch (\Exception $exception) {
+            // Log the error
+            $logger = $this->factory->getLogger();
+            $logger->addError('An error occurred while attempting to fetch updates: ' . $exception->getMessage());
+
             return array(
                 'error'   => true,
                 'message' => 'mautic.core.updater.error.fetching.updates'
@@ -142,6 +149,14 @@ class UpdateHelper
         }
 
         if ($data->code != 200) {
+            // Log the error
+            $logger = $this->factory->getLogger();
+            $logger->addError(sprintf(
+                'An unexpected %1$s code was returned while attempting to fetch updates.  The message received was: %2$s',
+                $data->code,
+                is_string($data->body) ? $data->body : implode('; ', $data->body)
+            ));
+
             return array(
                 'error'   => true,
                 'message' => 'mautic.core.updater.error.fetching.updates'

@@ -11,98 +11,250 @@ namespace Mautic\EmailBundle\Entity;
 
 use Doctrine\ORM\Mapping as ORM;
 use JMS\Serializer\Annotation as Serializer;
-use Mautic\CampaignBundle\Entity\Campaign;
+use Mautic\CoreBundle\Doctrine\Mapping\ClassMetadataBuilder;
 use Mautic\CoreBundle\Entity\IpAddress;
+use Mautic\CoreBundle\Helper\EmojiHelper;
 use Mautic\LeadBundle\Entity\Lead;
-
+use Mautic\ApiBundle\Serializer\Driver\ApiMetadataDriver;
 /**
- * Class Stats
- * @ORM\Table(name="email_stats")
- * @ORM\Entity(repositoryClass="Mautic\EmailBundle\Entity\StatRepository")
- * @Serializer\ExclusionPolicy("all")
+ * Class Stat
+ *
+ * @package Mautic\EmailBundle\Entity
  */
 class Stat
 {
 
     /**
-     * @ORM\Column(type="integer")
-     * @ORM\Id()
-     * @ORM\GeneratedValue(strategy="AUTO")
+     * @var int
      */
     private $id;
 
     /**
-     * @ORM\ManyToOne(targetEntity="Email", inversedBy="stats")
-     * @ORM\JoinColumn(name="email_id", referencedColumnName="id", nullable=false, onDelete="CASCADE")
-     **/
+     * @var Email
+     */
     private $email;
 
     /**
-     * @ORM\ManyToOne(targetEntity="Mautic\LeadBundle\Entity\Lead")
-     * @ORM\JoinColumn(name="lead_id", referencedColumnName="id", nullable=true, onDelete="SET NULL")
-     **/
+     * @var \Mautic\LeadBundle\Entity\Lead
+     */
     private $lead;
 
     /**
-     * @ORM\Column(name="email_address", type="string")
+     * @var string
      */
     private $emailAddress;
+
     /**
-     * @ORM\ManyToOne(targetEntity="Mautic\LeadBundle\Entity\LeadList")
-     * @ORM\JoinColumn(name="list_id", referencedColumnName="id", nullable=true)
-     **/
+     * @var \Mautic\LeadBundle\Entity\LeadList
+     */
     private $list;
 
     /**
-     * @ORM\ManyToOne(targetEntity="Mautic\CoreBundle\Entity\IpAddress", cascade={"merge", "persist"})
-     * @ORM\JoinColumn(name="ip_id", referencedColumnName="id", nullable=true)
+     * @var \Mautic\CoreBundle\Entity\IpAddress
      */
     private $ipAddress;
 
     /**
-     * @ORM\Column(name="date_sent", type="datetime")
+     * @var \DateTime
      */
     private $dateSent;
 
     /**
-     * @ORM\Column(name="is_read", type="boolean")
+     * @var bool
      */
     private $isRead = false;
 
     /**
-     * @ORM\Column(name="is_failed", type="boolean")
+     * @var bool
      */
     private $isFailed = false;
 
     /**
-     * @ORM\Column(name="viewed_in_browser", type="boolean")
+     * @var bool
      */
     private $viewedInBrowser = false;
 
     /**
-     * @ORM\Column(name="date_read", type="datetime", nullable=true)
+     * @var \DateTime
      */
     private $dateRead;
 
     /**
-     * @ORM\Column(name="tracking_hash", type="string", nullable=true)
+     * @var string
      */
     private $trackingHash;
 
     /**
-     * @ORM\Column(name="retry_count", type="string", nullable=true)
+     * @var int
      */
     private $retryCount = 0;
 
     /**
-     * @ORM\Column(name="source", type="string", nullable=true)
+     * @var string
      */
     private $source;
 
     /**
-     * @ORM\Column(name="source_id", type="integer", nullable=true)
+     * @var int
      */
     private $sourceId;
+
+    /**
+     * @var array
+     */
+    private $tokens = array();
+
+    /**
+     * @var string
+     *
+     * @deprecated 1.2.3 - to be removed in 2.0
+     */
+    private $copy;
+
+    /**
+     * @var Copy
+     */
+    private $storedCopy;
+
+    /**
+     * @var int
+     */
+    private $openCount;
+
+    /**
+     * @var \DateTime
+     */
+    private $lastOpened;
+
+    /**
+     * @var array
+     */
+    private $openDetails = array();
+
+    /**
+     * @param ORM\ClassMetadata $metadata
+     */
+    public static function loadMetadata (ORM\ClassMetadata $metadata)
+    {
+        $builder = new ClassMetadataBuilder($metadata);
+
+        $builder->setTable('email_stats')
+            ->setCustomRepositoryClass('Mautic\EmailBundle\Entity\StatRepository')
+            ->addIndex(array('email_id', 'lead_id'), 'stat_email_search')
+            ->addIndex(array('is_failed'), 'stat_email_failed_search')
+            ->addIndex(array('is_read'), 'stat_email_read_search')
+            ->addIndex(array('tracking_hash'), 'stat_email_hash_search')
+            ->addIndex(array('source', 'source_id'), 'stat_email_source_search');
+
+        $builder->addId();
+
+        $builder->createManyToOne('email', 'Email')
+            ->inversedBy('stats')
+            ->addJoinColumn('email_id', 'id', true, false, 'SET NULL')
+            ->build();
+
+        $builder->addLead(true, 'SET NULL');
+
+        $builder->createField('emailAddress', 'string')
+            ->columnName('email_address')
+            ->build();
+
+        $builder->createManyToOne('list', 'Mautic\LeadBundle\Entity\LeadList')
+            ->addJoinColumn('list_id', 'id', true, false, 'SET NULL')
+            ->build();
+
+        $builder->addIpAddress(true);
+
+        $builder->createField('dateSent', 'datetime')
+            ->columnName('date_sent')
+            ->build();
+
+        $builder->createField('isRead', 'boolean')
+            ->columnName('is_read')
+            ->build();
+
+        $builder->createField('isFailed', 'boolean')
+            ->columnName('is_failed')
+            ->build();
+
+        $builder->createField('viewedInBrowser', 'boolean')
+            ->columnName('viewed_in_browser')
+            ->build();
+
+        $builder->createField('dateRead', 'datetime')
+            ->columnName('date_read')
+            ->nullable()
+            ->build();
+
+        $builder->createField('trackingHash', 'string')
+            ->columnName('tracking_hash')
+            ->nullable()
+            ->build();
+
+        $builder->createField('retryCount', 'integer')
+            ->columnName('retry_count')
+            ->nullable()
+            ->build();
+
+        $builder->createField('source', 'string')
+            ->nullable()
+            ->build();
+
+        $builder->createField('sourceId', 'integer')
+            ->columnName('source_id')
+            ->nullable()
+            ->build();
+
+        $builder->createField('tokens', 'array')
+            ->nullable()
+            ->build();
+
+        /**
+         * @deprecated 1.2.3 - to be removed in 2.0
+         */
+        $builder->addNullableField('copy', 'text');
+
+        $builder->createManyToOne('storedCopy', 'Mautic\EmailBundle\Entity\Copy')
+            ->addJoinColumn('copy_id', 'id', true, false, 'SET NULL')
+            ->build();
+
+        $builder->addNullableField('openCount', 'integer', 'open_count');
+
+        $builder->addNullableField('lastOpened', 'datetime', 'last_opened');
+
+        $builder->addNullableField('openDetails', 'array', 'open_details');
+    }
+
+    /**
+     * Prepares the metadata for API usage
+     *
+     * @param $metadata
+     */
+    public static function loadApiMetadata(ApiMetadataDriver $metadata)
+    {
+        $metadata->setGroupPrefix('stat')
+            ->addProperties(
+                array(
+                    'id',
+                    'emailAddress',
+                    'ipAddress',
+                    'dateSent',
+                    'isRead',
+                    'isFailed',
+                    'dateRead',
+                    'retryCount',
+                    'source',
+                    'openCount',
+                    'lastOpened',
+                    'sourceId',
+                    'trackingHash',
+                    'viewedInBrowser',
+                    'lead',
+                    'email'
+                )
+            )
+            ->build();
+    }
 
     /**
      * @return mixed
@@ -137,7 +289,7 @@ class Stat
     }
 
     /**
-     * @return mixed
+     * @return Email
      */
     public function getEmail ()
     {
@@ -147,7 +299,7 @@ class Stat
     /**
      * @param mixed $email
      */
-    public function setEmail (Email $email)
+    public function setEmail (Email $email = null)
     {
         $this->email = $email;
     }
@@ -161,7 +313,7 @@ class Stat
     }
 
     /**
-     * @return mixed
+     * @return IpAddress
      */
     public function getIpAddress ()
     {
@@ -187,7 +339,7 @@ class Stat
     /**
      * @return mixed
      */
-    public function isRead()
+    public function isRead ()
     {
         return $this->getIsRead();
     }
@@ -201,7 +353,7 @@ class Stat
     }
 
     /**
-     * @return mixed
+     * @return Lead
      */
     public function getLead ()
     {
@@ -211,7 +363,7 @@ class Stat
     /**
      * @param mixed $lead
      */
-    public function setLead (Lead $lead)
+    public function setLead (Lead $lead = null)
     {
         $this->lead = $lead;
     }
@@ -233,7 +385,7 @@ class Stat
     }
 
     /**
-     * @return mixed
+     * @return \Mautic\LeadBundle\Entity\LeadList
      */
     public function getList ()
     {
@@ -267,7 +419,7 @@ class Stat
     /**
      *
      */
-    public function upRetryCount()
+    public function upRetryCount ()
     {
         $this->retryCount++;
     }
@@ -291,7 +443,7 @@ class Stat
     /**
      * @return mixed
      */
-    public function isFailed()
+    public function isFailed ()
     {
         return $this->getIsFailed();
     }
@@ -357,6 +509,152 @@ class Stat
      */
     public function setSourceId ($sourceId)
     {
-        $this->sourceId = (int) $sourceId;
+        $this->sourceId = (int)$sourceId;
+    }
+
+    /**
+     * @return mixed
+     */
+    public function getTokens ()
+    {
+        return $this->tokens;
+    }
+
+    /**
+     * @param mixed $tokens
+     */
+    public function setTokens ($tokens)
+    {
+        $this->tokens = $tokens;
+    }
+
+    /**
+     * @deprecated 1.2.3 - to be removed in 2.0
+     *
+     * @return mixed
+     */
+    public function getCopy()
+    {
+        return $this->copy;
+    }
+
+    /**
+     * @deprecated 1.2.3 - to be removed in 2.0
+     *
+     * @param mixed $copy
+     *
+     * @return Stat
+     */
+    public function setCopy($copy)
+    {
+        // Ensure it's clean of emoji
+        $copy = EmojiHelper::toShort($copy);
+
+        $this->copy = $copy;
+
+        return $this;
+    }
+
+    /**
+     * @return mixed
+     */
+    public function getOpenCount()
+    {
+        return $this->openCount;
+    }
+
+    /**
+     * @param mixed $openCount
+     *
+     * @return Stat
+     */
+    public function setOpenCount($openCount)
+    {
+        $this->openCount = $openCount;
+
+        return $this;
+    }
+
+    /**
+     * @param $details
+     */
+    public function addOpenDetails($details)
+    {
+        $this->openDetails[] = $details;
+
+        $this->openCount++;
+    }
+
+    /**
+     * Up the sent count
+     *
+     * @return Stat
+     */
+    public function upOpenCount()
+    {
+        $count = (int) $this->openCount + 1;
+        $this->openCount = $count;
+
+        return $this;
+    }
+
+    /**
+     * @return mixed
+     */
+    public function getLastOpened()
+    {
+        return $this->lastOpened;
+    }
+
+    /**
+     * @param mixed $lastOpened
+     *
+     * @return Stat
+     */
+    public function setLastOpened($lastOpened)
+    {
+        $this->lastOpened = $lastOpened;
+
+        return $this;
+    }
+
+    /**
+     * @return mixed
+     */
+    public function getOpenDetails()
+    {
+        return $this->openDetails;
+    }
+
+    /**
+     * @param mixed $openDetails
+     *
+     * @return Stat
+     */
+    public function setOpenDetails($openDetails)
+    {
+        $this->openDetails = $openDetails;
+
+        return $this;
+    }
+
+    /**
+     * @return Copy
+     */
+    public function getStoredCopy()
+    {
+        return $this->storedCopy;
+    }
+
+    /**
+     * @param Copy $storedCopy
+     *
+     * @return Stat
+     */
+    public function setStoredCopy(Copy $storedCopy)
+    {
+        $this->storedCopy = $storedCopy;
+
+        return $this;
     }
 }

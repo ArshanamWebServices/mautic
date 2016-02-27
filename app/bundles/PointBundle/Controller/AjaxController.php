@@ -61,10 +61,16 @@ class AjaxController extends CommonAjaxController
             $actions = $model->getPointActions();
 
             if (isset($actions['actions'][$type])) {
-                $formType = (!empty($actions['actions'][$type]['formType'])) ? $actions['actions'][$type]['formType'] : 'genericpoint_settings';
-                $form     = $this->get('form.factory')->create('pointaction', array(), array('formType' => $formType));
-                $html     = $this->renderView('MauticPointBundle:Point:actionform.html.php', array(
-                    'form' => $this->setFormTheme($form, 'MauticPointBundle:Point:actionform.html.php', 'MauticPointBundle:FormTheme\Action')
+                $themes = array('MauticPointBundle:FormTheme\Action');
+                if (!empty($actions['actions'][$type]['formTheme'])) {
+                    $themes[] = $actions['actions'][$type]['formTheme'];
+                }
+
+                $formType        = (!empty($actions['actions'][$type]['formType'])) ? $actions['actions'][$type]['formType'] : 'genericpoint_settings';
+                $formTypeOptions = (!empty($actions['actions'][$type]['formTypeOptions'])) ? $actions['actions'][$type]['formTypeOptions'] : array();
+                $form            = $this->get('form.factory')->create('pointaction', array(), array('formType' => $formType, 'formTypeOptions' => $formTypeOptions));
+                $html            = $this->renderView('MauticPointBundle:Point:actionform.html.php', array(
+                    'form' => $this->setFormTheme($form, 'MauticPointBundle:Point:actionform.html.php', $themes)
                 ));
 
                 //replace pointaction with point

@@ -18,17 +18,15 @@ $listCommand = $view['translator']->trans('mautic.lead.lead.searchcommand.list')
         <table class="table table-hover table-striped table-bordered" id="leadListTable">
             <thead>
             <tr>
-                <th class="col-leadlist-actions pl-20">
-                    <div class="checkbox-inline custom-primary">
-                        <label class="mb-0 pl-10">
-                            <input type="checkbox" id="customcheckbox-one0" value="1" data-toggle="checkall" data-target="#leadListTable">
-                            <span></span>
-                        </label>
-                    </div>
-                </th>
-                <th class="col-leadlist-name"><?php echo $view['translator']->trans('mautic.lead.list.thead.name'); ?></th>
+                <?php
+                echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
+                    'checkall' => 'true',
+                    'target'   => '#leadListTable'
+                ));
+                ?>
+                <th class="col-leadlist-name"><?php echo $view['translator']->trans('mautic.core.name'); ?></th>
                 <th class="visible-md visible-lg col-leadlist-leadcount"><?php echo $view['translator']->trans('mautic.lead.list.thead.leadcount'); ?></th>
-                <th class="visible-md visible-lg col-leadlist-id"><?php echo $view['translator']->trans('mautic.lead.list.thead.id'); ?></th>
+                <th class="visible-md visible-lg col-leadlist-id"><?php echo $view['translator']->trans('mautic.core.id'); ?></th>
             </tr>
             </thead>
             <tbody>
@@ -64,23 +62,26 @@ $listCommand = $view['translator']->trans('mautic.lead.lead.searchcommand.list')
                             <i class="fa fa-fw fa-globe"></i>
                             <?php endif; ?>
                             <?php if ($security->hasEntityAccess(true, $permissions['lead:lists:editother'], $item->getCreatedBy())) : ?>
-                                <a href="<?php echo $view['router']->generate('mautic_leadlist_action', array('objectAction' => 'edit', 'objectId' => $item->getId())); ?>"
-                                   data-toggle="ajax">
+                                <a href="<?php echo $view['router']->generate('mautic_leadlist_action', array('objectAction' => 'edit', 'objectId' => $item->getId())); ?>" data-toggle="ajax">
                                     <?php echo $item->getName(); ?> (<?php echo $item->getAlias(); ?>)
                                 </a>
                             <?php else : ?>
                                 <?php echo $item->getName(); ?> (<?php echo $item->getAlias(); ?>)
                             <?php endif; ?>
-                            <?php if (!$item->isGlobal() && $currentUser->getId() != $item->getCreatedBy()->getId()): ?>
+                            <?php if (!$item->isGlobal() && $currentUser->getId() != $item->getCreatedBy()): ?>
                             <br />
-                            <span class="small">(<?php echo $item->getCreatedBy()->getName(); ?>)</span>
+                            <span class="small">(<?php echo $item->getCreatedByUser(); ?>)</span>
                             <?php endif; ?>
                         </div>
                         <?php if ($description = $item->getDescription()): ?>
                         <div class="text-muted mt-4"><small><?php echo $description; ?></small></div>
                         <?php endif; ?>
                     </td>
-                    <td class="visible-md visible-lg"><?php echo count($item->getIncludedLeads()); ?></td>
+                    <td class="visible-md visible-lg">
+                        <a class="label label-primary" href="<?php echo $view['router']->generate('mautic_lead_index', array('search' => $view['translator']->trans('mautic.lead.lead.searchcommand.list') . ':' . $item->getAlias())); ?>" data-toggle="ajax"<?php echo ($leadCounts[$item->getId()] == 0) ? "disabled=disabled" : ""; ?>>
+                            <?php echo $view['translator']->transChoice('mautic.lead.list.viewleads_count', $leadCounts[$item->getId()], array('%count%' => $leadCounts[$item->getId()])); ?>
+                        </a>
+                    </td>
                     <td class="visible-md visible-lg"><?php echo $item->getId(); ?></td>
                 </tr>
             <?php endforeach; ?>

@@ -14,6 +14,13 @@ $header = ($activeAsset->getId()) ?
 $view['slots']->set("headerTitle", $header);
 $view['slots']->set('mauticContent', 'asset');
 ?>
+<script>
+	<?php echo 'mauticAssetUploadEndpoint = "' . $uploadEndpoint . '";'; ?>
+	<?php echo 'mauticAssetUploadMaxSize = ' . $maxSize . ';'; ?>
+	<?php echo 'mauticAssetUploadMaxSizeError = "' . $maxSizeError . '";'; ?>
+	<?php echo 'mauticAssetUploadExtensions = "' . $extensions . '";'; ?>
+	<?php echo 'mauticAssetUploadExtensionError = "' . $extensionError . '";'; ?>
+</script>
 <?php echo $view['form']->start($form); ?>
 <!-- start: box layout -->
 <div class="box-layout">
@@ -22,11 +29,38 @@ $view['slots']->set('mauticContent', 'asset');
         <div class="pa-md">
 	        <div class="row">
 		        <div class="col-md-6">
-				    <?php echo $view['form']->row($form['file']); ?>
+					<div class="col-md-7 pl-0">
+						<?php echo $view['form']->row($form['storageLocation']); ?>
+					</div>
+			        <div class="col-md-5 text-left mt-lg<?php if ($startOnLocal) echo ' hide'; ?>" id="remote-button">
+						<?php if ($integrations) : ?>
+							<a data-toggle="ajaxmodal" data-target="#RemoteFileModal" data-header="<?php echo $view['translator']->trans('mautic.asset.remote.file.browse'); ?>" href="<?php echo $view['router']->generate('mautic_asset_remote'); ?>?tmpl=modal" class="btn btn-primary">
+								<?php echo $view['translator']->trans('mautic.asset.remote.file.browse'); ?>
+							</a>
+						<?php endif; ?>
+					</div>
+			        <div id="storage-local"<?php if (!$startOnLocal) echo ' class="hide"'; ?>>
+				        <div class="row">
+					        <div class="form-group col-xs-12 ">
+						        <?php echo $view['form']->label($form['tempName']); ?>
+						        <?php echo $view['form']->widget($form['tempName']); ?>
+						        <?php echo $view['form']->errors($form['tempName']); ?>
+						        <div class="help-block mdropzone-error"></div>
+						        <div class="mdropzone text-center" id="dropzone">
+						        	<div class="dz-message">
+						        		<h4><?php echo $view['translator']->trans('mautic.asset.drop.file.here'); ?></h4>
+									</div>
+						        </div>
+					        </div>
+				        </div>
+			        </div>
+			        <div id="storage-remote"<?php if ($startOnLocal) echo ' class="hide"'; ?>>
+				        <?php echo $view['form']->row($form['remotePath']); ?>
+			        </div>
 		    	</div>
 		    	<div class="col-md-6">
 		    		<div class="row">
-				    	<div class="form-group col-xs-12">
+				    	<div class="form-group col-xs-12 preview">
 				    		<?php echo $view->render('MauticAssetBundle:Asset:preview.html.php', array('activeAsset' => $activeAsset, 'assetDownloadUrl' => $assetDownloadUrl)); ?>
 			    		</div>
 		    		</div>
@@ -60,3 +94,11 @@ $view['slots']->set('mauticContent', 'asset');
 	</div>
 </div>
 <?php echo $view['form']->end($form); ?>
+
+<?php if ($integrations) : ?>
+	<?php echo $view->render('MauticCoreBundle:Helper:modal.html.php', array(
+	    'id'            => 'RemoteFileModal',
+	    'size'          => 'lg',
+	    'footerButtons' => true
+	)); ?>
+<?php endif; ?>

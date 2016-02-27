@@ -10,10 +10,10 @@
 namespace Mautic\CategoryBundle\Model;
 
 use Mautic\CategoryBundle\Event\CategoryEvent;
-use Mautic\CoreBundle\Helper\InputHelper;
 use Mautic\CoreBundle\Model\FormModel;
 use Mautic\CategoryBundle\Entity\Category;
 use Mautic\CategoryBundle\CategoryEvents;
+use Symfony\Component\EventDispatcher\Event;
 
 /**
  * Class CategoryModel
@@ -51,20 +51,20 @@ class CategoryModel extends FormModel
     {
         $alias = $entity->getAlias();
         if (empty($alias)) {
-            $alias = strtolower(InputHelper::alphanum($entity->getTitle(), false, true));
-        } else {
-            $alias = strtolower(InputHelper::alphanum($alias, false, true));
+            $alias = $entity->getTitle();
         }
+        $alias = $this->cleanAlias($alias, '', false, '-');
 
         //make sure alias is not already taken
         $repo      = $this->getRepository();
         $testAlias = $alias;
-        $count     = $repo->checkUniqueAlias($testAlias, $entity);
+        $bundle    = $entity->getBundle();
+        $count     = $repo->checkUniqueCategoryAlias($bundle, $testAlias, $entity);
         $aliasTag  = $count;
 
         while ($count) {
             $testAlias = $alias . $aliasTag;
-            $count     = $repo->checkUniqueAlias($testAlias, $entity);
+            $count     = $repo->checkUniqueCategoryAlias($bundle, $testAlias, $entity);
             $aliasTag++;
         }
         if ($testAlias != $alias) {
@@ -123,7 +123,7 @@ class CategoryModel extends FormModel
      * @param $isNew
      * @throws \Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException
      */
-    protected function dispatchEvent($action, &$entity, $isNew = false, $event = false)
+    protected function dispatchEvent($action, &$entity, $isNew = false, Event $event = null)
     {
         if (!$entity instanceof Category) {
             throw new MethodNotAllowedHttpException(array('Category'));
@@ -143,7 +143,7 @@ class CategoryModel extends FormModel
                 $name = CategoryEvents::CATEGORY_POST_DELETE;
                 break;
             default:
-                return false;
+                return null;
         }
 
         if ($this->dispatcher->hasListeners($name)) {
@@ -155,7 +155,7 @@ class CategoryModel extends FormModel
             $this->dispatcher->dispatch($name, $event);
             return $event;
         } else {
-            return false;
+            return null;
         }
     }
 

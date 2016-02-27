@@ -43,12 +43,11 @@ class LoadLeadListData extends AbstractFixture implements OrderedFixtureInterfac
      */
     public function load(ObjectManager $manager)
     {
-        $translator = $this->container->get('translator');
         $adminUser  = $this->getReference('admin-user');
 
         $list = new LeadList();
-        $list->setName($translator->trans('mautic.lead.list.us', array(), 'fixtures'));
-        $list->setAlias($translator->trans('mautic.lead.list.usalias', array(), 'fixtures'));
+        $list->setName('United States');
+        $list->setAlias('us');
         $list->setCreatedBy($adminUser);
         $list->setIsGlobal(true);
         $list->setFilters(array(
@@ -66,7 +65,7 @@ class LoadLeadListData extends AbstractFixture implements OrderedFixtureInterfac
         $manager->persist($list);
         $manager->flush();
 
-       $this->container->get('mautic.factory')->getModel('lead.list')->regenerateListLeads($list);
+       $this->container->get('mautic.factory')->getModel('lead.list')->rebuildListLeads($list);
     }
 
     /**

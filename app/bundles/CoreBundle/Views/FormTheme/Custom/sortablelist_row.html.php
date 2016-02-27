@@ -1,13 +1,13 @@
 <?php
-$hasErrors = count($form->vars['errors']);
 $list      = $form->children['list'];
-$feedbackClass = ($app->getRequest()->getMethod() == 'POST' && !empty($hasErrors)) ? " has-error" : "";
+$hasErrors = count($list->vars['errors']);
+$feedbackClass = (!empty($hasErrors)) ? " has-error" : "";
 $datePrototype = (isset($list->vars['prototype'])) ?
     $view->escape('<div class="sortable">'.$view['form']->widget($list->vars['prototype']).'</div>') : '';
-$feedbackClass = ($app->getRequest()->getMethod() == 'POST' && !empty($hasErrors)) ? " has-error" : "";
+$feedbackClass = (!empty($hasErrors)) ? " has-error" : "";
 ?>
 <div class="row">
-    <div data-toggle="sortablelist" data-prefix="<?php echo $form->vars['id']; ?>" class="form-group col-xs-12 <?php echo $feedbackClass; ?>" id="<?php echo $form->vars['id']; ?>_list">
+    <div data-toggle="sortablelist" data-prefix="<?php echo $form->vars['id']; ?>" class="form-group col-xs-12 <?php echo $feedbackClass; ?>" id="<?php echo $form->vars['id']; ?>_list" style="overflow:auto">
         <?php echo $view['form']->label($form, $label) ?>
         <a  data-prototype="<?php echo $datePrototype; ?>"
            class="btn btn-warning btn-xs btn-add-item" href="#" id="<?php echo $form->vars['id']; ?>_additem">
@@ -20,7 +20,7 @@ $feedbackClass = ($app->getRequest()->getMethod() == 'POST' && !empty($hasErrors
             <?php echo $view['form']->block($item, 'sortablelist_entry_row'); ?>
             <?php endforeach; ?>
         </div>
-        <?php echo $view['form']->errors($form); ?>
+        <?php echo $view['form']->errors($list); ?>
         <?php if ($isSortable): ?>
         <input type="hidden" class="sortable-itemcount" id="<?php echo $form->vars['id']; ?>_itemcount" value="<?php echo count($list); ?>" />
         <?php endif; ?>

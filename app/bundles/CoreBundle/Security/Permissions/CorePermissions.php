@@ -14,7 +14,6 @@ use Mautic\CoreBundle\Factory\MauticFactory;
 use Mautic\UserBundle\Entity\User;
 use Mautic\UserBundle\Entity\Permission;
 use Symfony\Component\Security\Core\SecurityContext;
-use Symfony\Component\Translation\TranslatorInterface;
 
 /**
  * Class CorePermissions
@@ -62,9 +61,9 @@ class CorePermissions
     /**
      * @return array
      */
-    protected function getAddonBundles()
+    protected function getPluginBundles()
     {
-        return $this->factory->getEnabledAddons();
+        return $this->factory->getPluginBundles();
     }
 
     /**
@@ -97,15 +96,13 @@ class CorePermissions
                     continue;
                 } //do not include this file
 
-                //explode MauticUserBundle into Mautic User Bundle so we can build the class needed
                 $object = $this->getPermissionObject($bundle['base'], false);
                 if (!empty($object)) {
                     $classes[strtolower($bundle['base'])] = $object;
                 }
             }
 
-            foreach ($this->getAddonBundles() as $bundle) {
-                //explode MauticUserBundle into Mautic User Bundle so we can build the class needed
+            foreach ($this->getPluginBundles() as $bundle) {
                 $object = $this->getPermissionObject($bundle['base'], false, true);
                 if (!empty($object)) {
                     $classes[strtolower($bundle['base'])] = $object;
@@ -121,25 +118,40 @@ class CorePermissions
      *
      * @param string $bundle
      * @param bool   $throwException
-     * @param bool   $addonBundle
+     * @param bool   $pluginBundle
      *
      * @return mixed
      * @throws \InvalidArgumentException
      */
-    public function getPermissionObject($bundle, $throwException = true, $addonBundle = false)
+    public function getPermissionObject($bundle, $throwException = true, $pluginBundle = false)
     {
         static $classes = array();
         if (!empty($bundle)) {
             if (empty($classes[$bundle])) {
-                $bundle    = ucfirst($bundle);
-                $base      = $addonBundle ? 'MauticAddon' : 'Mautic';
-                $className = "{$base}\\{$bundle}Bundle\\Security\\Permissions\\{$bundle}Permissions";
-                if (class_exists($className)) {
-                    $classes[$bundle] = new $className($this->getParams());
-                } elseif ($throwException) {
-                    throw new \InvalidArgumentException("$className not found!");
+                $bundle       = ucfirst($bundle);
+                $checkBundles = ($pluginBundle) ? $this->getPluginBundles() : $this->getBundles();
+                $bundleName   = $bundle . 'Bundle';
+
+                if (!$pluginBundle) {
+                    // Core bundle
+                    $bundleName = 'Mautic' . $bundleName;
+                }
+
+                if (array_key_exists($bundleName, $checkBundles)) {
+                    $className = $checkBundles[$bundleName]['namespace'] . "\\Security\\Permissions\\{$bundle}Permissions";
+                    $exists    = class_exists($className);
                 } else {
-                    $classes[$bundle] = false;
+                    $exists = false;
+                }
+
+                if ($exists) {
+                    $classes[$bundle] = new $className($this->getParams());
+                } else {
+                    if ($throwException) {
+                        throw new \InvalidArgumentException("Permission class not found for {$bundle}Bundle!");
+                    } else {
+                        $classes[$bundle] = false;
+                    }
                 }
             }
 
@@ -193,6 +205,9 @@ class CorePermissions
             $classes[$bundle]->analyzePermissions($bundlePermissions[$bundle], $bundlePermissions, true);
         }
 
+        //get a list of plugin bundles so we can tell later if a bundle is core or plugin
+        $pluginBundles = $this->getPluginBundles();
+        
         //create entities
         foreach ($bundlePermissions as $bundle => $permissions) {
             foreach ($permissions as $name => $perms) {
@@ -203,7 +218,7 @@ class CorePermissions
                 $entity->setName(strtolower($name));
 
                 $bit   = 0;
-                $class = $this->getPermissionObject($bundle);
+                $class = $this->getPermissionObject($bundle, true, array_key_exists(ucfirst($bundle) . "Bundle", $pluginBundles));
 
                 foreach ($perms as $perm) {
                     //get the bit for the perm
@@ -227,16 +242,18 @@ class CorePermissions
      * @param array|string $requestedPermission
      * @param string       $mode MATCH_ALL|MATCH_ONE|RETURN_ARRAY
      * @param User         $userEntity
+     * @param bool         $allowUnknown If the permission is not recognized, false will be returned.  Otherwise an
+     *                                     exception will be thrown
      *
-     * @return bool
+     * @return mixed
      * @throws \InvalidArgumentException
      */
-    public function isGranted($requestedPermission, $mode = "MATCH_ALL", $userEntity = null)
+    public function isGranted($requestedPermission, $mode = "MATCH_ALL", $userEntity = null, $allowUnknown = false)
     {
         static $grantedPermissions = array();
 
         if ($userEntity === null) {
-           $userEntity = $this->getUser();
+            $userEntity = $this->getUser();
         }
 
         if (!is_array($requestedPermission)) {
@@ -252,12 +269,12 @@ class CorePermissions
 
             $parts = explode(':', $permission);
 
-            if ($parts[0] == 'addon' && count($parts) == 4) {
-                $isAddon = true;
+            // addon @deprecated 1.1.4; will be removed in 2.0
+            if (($parts[0] == 'addon' ||$parts[0] == 'plugin') && count($parts) == 4) {
+                $isPlugin = true;
                 array_shift($parts);
             } else {
-                $isAddon = false;
-                $permission = strtolower($permission);
+                $isPlugin = false;
             }
 
             if (count($parts) != 3) {
@@ -269,16 +286,18 @@ class CorePermissions
             $activePermissions =  ($userEntity instanceof User) ? $userEntity->getActivePermissions() : array();
 
             //check against bundle permissions class
-            $permissionObject = $this->getPermissionObject($parts[0], true, $isAddon);
+            $permissionObject = $this->getPermissionObject($parts[0], true, $isPlugin);
 
             //Is the permission supported?
             if (!$permissionObject->isSupported($parts[1], $parts[2])) {
-                throw new \InvalidArgumentException($this->getTranslator()->trans('mautic.core.permissions.notfound',
+                if ($allowUnknown) {
+                    $permissions[$permission] = false;
+                } else {
+                    throw new \InvalidArgumentException($this->getTranslator()->trans('mautic.core.permissions.notfound',
                         array("%permission%" => $permission))
-                );
-            }
-
-            if ($userEntity == "anon.") {
+                    );
+                }
+            }elseif ($userEntity == "anon.") {
                 //anon user or session timeout
                 $permissions[$permission] = false;
             } elseif ($userEntity->isAdmin()) {
@@ -329,16 +348,21 @@ class CorePermissions
                 continue;
             }
 
-            $p = strtolower($p);
-
             $parts = explode(':', $p);
+            // addon @deprecated 1.1.4; will be removed in 2.0
+            if (($parts[0] == 'addon' || $parts[0] == 'plugin') && count($parts) == 4) {
+                $isPlugin = true;
+                array_shift($parts);
+            } else {
+                $isPlugin = false;
+            }
 
             if (count($parts) != 3) {
-                $result[$permission] = false;
+                $result[$p] = false;
             } else {
                 //check against bundle permissions class
-                $permissionObject    = $this->getPermissionObject($parts[0], false);
-                $result[$permission] = $permissionObject && $permissionObject->isSupported($parts[1], $parts[2]);
+                $permissionObject = $this->getPermissionObject($parts[0], false, $isPlugin);
+                $result[$p]       = $permissionObject && $permissionObject->isSupported($parts[1], $parts[2]);
             }
         }
 
@@ -350,16 +374,20 @@ class CorePermissions
      *
      * @param string|bool $ownPermission
      * @param string|bool $otherPermission
-     * @param User        $owner
+     * @param User|int    $ownerId
      *
      * @return bool
      */
-    public function hasEntityAccess($ownPermission, $otherPermission, $owner)
+    public function hasEntityAccess($ownPermission, $otherPermission, $ownerId = 0)
     {
         $user = $this->getUser();
         if (!is_object($user)) {
             //user is likely anon. so assume no access and let controller handle via published status
             return false;
+        }
+
+        if ($ownerId instanceof User) {
+            $ownerId = $ownerId->getId();
         }
 
         if (!is_bool($ownPermission) && !is_bool($otherPermission)) {
@@ -383,7 +411,7 @@ class CorePermissions
             }
         }
 
-        $ownerId = (!empty($owner)) ? $owner->getId() : 0;
+        $ownerId = (int) $ownerId;
 
         if ($ownerId === 0) {
             if ($other) {
@@ -446,6 +474,6 @@ class CorePermissions
     public function isAnonymous()
     {
         $userEntity = $this->getUser();
-        return ($userEntity instanceof User) ? false : true;
+        return ($userEntity instanceof User && $userEntity->getId()) ? false : true;
     }
 }

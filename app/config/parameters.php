@@ -7,62 +7,65 @@
  * @license     GNU/GPLv3 http://www.gnu.org/licenses/gpl-3.0.html
  */
 
+include __DIR__ . '/paths_helper.php';
+
 //load default parameters from bundle files
-$bundles = $container->getParameter('mautic.bundles');
-$addons  = $container->getParameter('mautic.addon.bundles');
+$core    = $container->getParameter('mautic.bundles');
+$plugins = $container->getParameter('mautic.plugin.bundles');
+
+$bundles = array_merge($core, $plugins);
+unset($core, $plugins);
 
 $mauticParams = array();
+
 foreach ($bundles as $bundle) {
-    if (file_exists($bundle['directory'].'/Config/parameters.php')) {
-        $bundleParams = include $bundle['directory'].'/Config/parameters.php';
-        foreach ($bundleParams as $k => $v) {
-            $mauticParams[$k] = $v;
-        }
+    if (!empty($bundle['config']['parameters'])) {
+        $mauticParams = array_merge($mauticParams, $bundle['config']['parameters']);
     }
 }
 
-foreach ($addons as $bundle) {
-    if (file_exists($bundle['directory'].'/Config/parameters.php')) {
-        $bundleParams = include $bundle['directory'].'/Config/parameters.php';
-        foreach ($bundleParams as $k => $v) {
-            $mauticParams[$k] = $v;
-        }
-    }
-}
+// Find available translations
+$locales = array();
 
-$mauticParams['supported_languages'] = array(
-    'en_US' => 'English - United States'
-);
+$extractLocales = function($dir) use (&$locales) {
+    $locale = $dir->getFilename();
 
-//include path settings
-$root  = $container->getParameter('kernel.root_dir');
-
-//Closure to replace %kernel_root_dir% placeholders
-$replaceRootPlaceholder = function(&$value) use ($root, &$replaceRootPlaceholder) {
-    if (is_array($value)) {
-        foreach ($value as &$v) {
-            $replaceRootPlaceholder($v);
-        }
-    } elseif (strpos($value, '%kernel.root_dir%') !== false) {
-        $value = str_replace('%kernel.root_dir%', $root, $value);
+    // Check config
+    $configFile = $dir->getRealpath() . '/config.php';
+    if (file_exists($configFile)) {
+        $config           = include $configFile;
+        $locales[$locale] = (!empty($config['name'])) ? $config['name'] : $locale;
     }
 };
 
-//Include local paths
-require 'paths.php';
-$replaceRootPlaceholder($paths);
+$defaultLocalesDir = new \Symfony\Component\Finder\Finder();
+$defaultLocalesDir->directories()->in($root . '/bundles/CoreBundle/Translations')->ignoreDotFiles(true)->depth('== 0');
+foreach ($defaultLocalesDir as $dir) {
+    $extractLocales($dir);
+}
 
-//load parameters array from local configuration
+$installedLocales = new \Symfony\Component\Finder\Finder();
+$installedLocales->directories()->in($root . '/../' . $paths['translations'])->ignoreDotFiles(true)->depth('== 0');
+
+foreach ($installedLocales as $dir) {
+    $extractLocales($dir);
+}
+unset($defaultLocalesDir, $installedLocales, $extractLocales);
+
+
+$mauticParams['supported_languages'] = $locales;
+
+// Load parameters array from local configuration
 if (isset($paths['local_config'])) {
     if (file_exists($paths['local_config'])) {
         include $paths['local_config'];
 
-        //override default with local
+        // Override default with local
         $mauticParams = array_merge($mauticParams, $parameters);
     }
 }
 
-//force local specific params
+// Force local specific params
 if (file_exists(__DIR__ . '/parameters_local.php')) {
     include __DIR__ . '/parameters_local.php';
 
@@ -70,17 +73,45 @@ if (file_exists(__DIR__ . '/parameters_local.php')) {
     $mauticParams = array_merge($mauticParams, $parameters);
 }
 
-//Set the paths
+// Set the paths
 $mauticParams['paths'] = $paths;
 
-//Add to the container
+// Add to the container
 foreach ($mauticParams as $k => &$v) {
-    //update the file paths in case $factory->getParameter() is used
+    // Update the file paths in case $factory->getParameter() is used
     $replaceRootPlaceholder($v);
 
-    //add to the container
+    // Update with system value if applicable
+    if (!empty($v) && is_string($v) && preg_match('/getenv\((.*?)\)/', $v, $match)) {
+        $v = (string) getenv($match[1]);
+    }
+
+    // Add to the container
     $container->setParameter("mautic.{$k}", $v);
 }
 
-//used for passing params into factory/services
+// Used for passing params into factory/services
 $container->setParameter('mautic.parameters', $mauticParams);
+
+// Set the router URI for CLI
+if (isset($mauticParams['site_url'])) {
+    $parts = parse_url($mauticParams['site_url']);
+
+    if (!empty($parts['host'])) {
+        $path = '';
+
+        if (!empty($parts['path'])) {
+            // Check and remove trailing slash to prevent double // in Symfony cli generated URLs
+            $path = $parts['path'];
+            if (substr($path, -1) == '/') {
+                $path = substr($path, 0, -1);
+            }
+        }
+
+        $container->setParameter('router.request_context.host', $parts['host']);
+        $container->setParameter('router.request_context.scheme', (!empty($parts['scheme']) ? $parts['scheme'] : 'http'));
+        $container->setParameter('router.request_context.base_url', $path);
+    }
+}
+
+unset($mauticParams, $replaceRootPlaceholder, $bundles);

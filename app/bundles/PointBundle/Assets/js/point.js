@@ -28,6 +28,9 @@ Mautic.pointTriggerOnLoad = function (container) {
             mQuery(this).find('.form-buttons').removeClass('hide');
         }).on('mouseout.triggerevents', function() {
             mQuery(this).find('.form-buttons').addClass('hide');
+        }).on('dblclick.triggerevents', function(event) {
+            event.preventDefault();
+            mQuery(this).find('.btn-edit').first().click();
         });
     }
 };
@@ -68,6 +71,9 @@ Mautic.pointTriggerEventOnLoad = function (container, response) {
             mQuery(this).find('.form-buttons').removeClass('hide');
         }).on('mouseout.triggerevents', function() {
             mQuery(this).find('.form-buttons').addClass('hide');
+        }).on('dblclick.triggerevents', function(event) {
+            event.preventDefault();
+            mQuery(this).find('.btn-edit').first().click();
         });
 
         //show events panel
@@ -82,9 +88,8 @@ Mautic.pointTriggerEventOnLoad = function (container, response) {
 };
 
 Mautic.getPointActionPropertiesForm = function(actionType) {
-    var labelSpinner = mQuery("label[for='point_type']");
-    var spinner = mQuery('<i class="fa fa-fw fa-spinner fa-spin"></i>');
-    labelSpinner.append(spinner);
+    Mautic.activateLabelLoadingIndicator('point_type');
+
     var query = "action=point:getActionForm&actionType=" + actionType;
     mQuery.ajax({
         url: mauticAjaxUrl,
@@ -96,11 +101,12 @@ Mautic.getPointActionPropertiesForm = function(actionType) {
                 mQuery('#pointActionProperties').html(response.html);
                 Mautic.onPageLoad('#pointActionProperties', response);
             }
-            spinner.remove();
         },
         error: function (request, textStatus, errorThrown) {
             Mautic.processAjaxError(request, textStatus, errorThrown);
-            spinner.remove();
+        },
+        complete: function() {
+            Mautic.removeLabelLoadingIndicator();
         }
     });
 };

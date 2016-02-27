@@ -22,6 +22,9 @@ Mautic.formOnLoad = function (container) {
            mQuery(this).find('.form-buttons').removeClass('hide');
         }).on('mouseout.mauticformfields', function() {
             mQuery(this).find('.form-buttons').addClass('hide');
+        }).on('dblclick.mauticformfields', function(event) {
+            event.preventDefault();
+            mQuery(this).find('.btn-edit').first().click();
         });
     }
 
@@ -43,7 +46,15 @@ Mautic.formOnLoad = function (container) {
             mQuery(this).find('.form-buttons').removeClass('hide');
         }).on('mouseout.mauticformactions', function() {
             mQuery(this).find('.form-buttons').addClass('hide');
+        }).on('dblclick.mauticformactions', function(event) {
+            event.preventDefault();
+            mQuery(this).find('.btn-edit').first().click();
         });
+    }
+
+
+    if (mQuery('#mauticform_formType').length && mQuery('#mauticform_formType').val() == '') {
+        mQuery('body').addClass('noscroll');
     }
 
     if (typeof Mautic.formSubmissionChart === 'undefined') {
@@ -51,9 +62,68 @@ Mautic.formOnLoad = function (container) {
     }
 };
 
-Mautic.getFormId = function() {
-    return mQuery('input#formId').val();
-}
+Mautic.updateFormFields = function () {
+    Mautic.activateLabelLoadingIndicator('campaignevent_properties_field');
+
+    var formId = mQuery('#campaignevent_properties_form').val();
+    Mautic.ajaxActionRequest('form:updateFormFields', {'formId': formId}, function(response) {
+        if (response.fields) {
+            var select = mQuery('#campaignevent_properties_field');
+            select.find('option').remove();
+            var fieldOptions = {};
+            mQuery.each(response.fields, function(key, field) {
+                var option = mQuery('<option></option>')
+                    .attr('value', field.alias)
+                    .text(field.label);
+                select.append(option);
+                fieldOptions[field.alias] = field.options;
+            });
+            select.attr('data-field-options', JSON.stringify(fieldOptions));
+            select.trigger('chosen:updated');
+            Mautic.updateFormFieldValues(select);
+        }
+        Mautic.removeLabelLoadingIndicator();
+    });
+};
+
+Mautic.updateFormFieldValues = function (field) {
+    field = mQuery(field);
+    var fieldValue = field.val();
+    var options = jQuery.parseJSON(field.attr('data-field-options'));
+    var valueField = mQuery('#campaignevent_properties_value');
+    var valueFieldAttrs = {
+        'class': valueField.attr('class'),
+        'id': valueField.attr('id'),
+        'name': valueField.attr('name'),
+        'autocomplete': valueField.attr('autocomplete'),
+        'value': valueField.attr('value')
+    };
+
+    if (typeof options[fieldValue] !== 'undefined' && !mQuery.isEmptyObject(options[fieldValue])) {
+        var newValueField = mQuery('<select/>')
+            .attr('class', valueFieldAttrs['class'])
+            .attr('id', valueFieldAttrs['id'])
+            .attr('name', valueFieldAttrs['name'])
+            .attr('autocomplete', valueFieldAttrs['autocomplete'])
+            .attr('value', valueFieldAttrs['value']);
+        mQuery.each(options[fieldValue], function(key, optionVal) {
+            var option = mQuery("<option></option>")
+                .attr('value', optionVal)
+                .text(optionVal);
+            newValueField.append(option);
+        });
+        valueField.replaceWith(newValueField);
+    } else {
+        var newValueField = mQuery('<input/>')
+            .attr('type', 'text')
+            .attr('class', valueFieldAttrs['class'])
+            .attr('id', valueFieldAttrs['id'])
+            .attr('name', valueFieldAttrs['name'])
+            .attr('autocomplete', valueFieldAttrs['autocomplete'])
+            .attr('value', valueFieldAttrs['value']);
+        valueField.replaceWith(newValueField);
+    }
+};
 
 Mautic.formOnUnload = function(id) {
     if (id === '#app-content') {
@@ -72,7 +142,7 @@ Mautic.formFieldOnLoad = function (container, response) {
             var newField = false;
         } else {
             //append content
-            mQuery(newHtml).appendTo('#mauticforms_fields');
+            mQuery(newHtml).insertBefore('#mauticforms_fields .mauticform-button-wrapper');
             var newField = true;
         }
         //activate new stuff
@@ -95,6 +165,9 @@ Mautic.formFieldOnLoad = function (container, response) {
             mQuery(this).find('.form-buttons').removeClass('hide');
         }).on('mouseout.mauticformfields', function() {
             mQuery(this).find('.form-buttons').addClass('hide');
+        }).on('dblclick.mauticformfields', function(event) {
+            event.preventDefault();
+            mQuery(this).find('.btn-edit').first().click();
         });
 
         //show fields panel
@@ -146,6 +219,9 @@ Mautic.formActionOnLoad = function (container, response) {
             mQuery(this).find('.form-buttons').removeClass('hide');
         }).on('mouseout.mauticformactions', function() {
             mQuery(this).find('.form-buttons').addClass('hide');
+        }).on('dblclick.mauticformactions', function(event) {
+            event.preventDefault();
+            mQuery(this).find('.btn-edit').first().click();
         });
 
         //show actions panel
@@ -181,7 +257,10 @@ Mautic.renderSubmissionChart = function (chartData) {
     }
     if (!chartData) {
         chartData = mQuery.parseJSON(mQuery('#submission-chart-data').text());
+    } else if (chartData.stats) {
+        chartData = chartData.stats;
     }
+
     var ctx = document.getElementById("submission-chart").getContext("2d");
     var options = {};
 
@@ -194,26 +273,27 @@ Mautic.renderSubmissionChart = function (chartData) {
 };
 
 Mautic.updateSubmissionChart = function(element, amount, unit) {
-    var element = mQuery(element);
-    var wrapper = element.closest('ul');
-    var button  = mQuery('#time-scopes .button-label');
-    var formId = Mautic.getFormId();
-    wrapper.find('a').removeClass('bg-primary');
-    element.addClass('bg-primary');
-    button.text(element.text());
-    var query = "action=form:updateSubmissionChart&amount=" + amount + "&unit=" + unit + "&formId=" + formId;
-    mQuery.ajax({
-        url: mauticAjaxUrl,
-        type: "POST",
-        data: query,
-        dataType: "json",
-        success: function (response) {
-            if (response.success) {
-                Mautic.renderSubmissionChart(response.stats);
-            }
-        },
-        error: function (request, textStatus, errorThrown) {
-            Mautic.processAjaxError(request, textStatus, errorThrown);
-        }
-    });
+    var formId = Mautic.getEntityId();
+    var query = "amount=" + amount + "&unit=" + unit + "&formId=" + formId;
+
+    Mautic.getChartData(element, 'form:updateSubmissionChart', query, 'renderSubmissionChart');
 }
+
+Mautic.selectFormType = function(formType) {
+    if (formType == 'standalone') {
+        mQuery('#actions-tab').removeClass('hide');
+        mQuery('#actions-container').removeClass('hide')
+        mQuery('.page-header h3').text(mauticLang.newStandaloneForm);
+    } else {
+        mQuery('#actions-tab').addClass('hide');
+        mQuery('#actions-container').addClass('hide');
+        mQuery('.page-header h3').text(mauticLang.newCampaignForm);
+    }
+
+    mQuery('#mauticform_formType').val(formType);
+
+    mQuery('body').removeClass('noscroll');
+
+    mQuery('.form-type-modal').remove();
+    mQuery('.form-type-modal-backdrop').remove();
+};

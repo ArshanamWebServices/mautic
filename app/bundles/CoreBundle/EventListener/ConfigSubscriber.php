@@ -9,12 +9,12 @@
 
 namespace Mautic\CoreBundle\EventListener;
 
-use Mautic\CoreBundle\EventListener\CommonSubscriber;
 use Mautic\ConfigBundle\ConfigEvents;
 use Mautic\ConfigBundle\Event\ConfigEvent;
 use Mautic\ConfigBundle\Event\ConfigBuilderEvent;
+
 /**
- * Class BuilderSubscriber
+ * Class ConfigSubscriber
  *
  * @package Mautic\CoreBundle\EventListener
  */
@@ -38,7 +38,7 @@ class ConfigSubscriber extends CommonSubscriber
             'bundle'        => 'CoreBundle',
             'formAlias'     => 'coreconfig',
             'formTheme'     => 'MauticCoreBundle:FormTheme\Config',
-            'parameters'    => $event->getParameters('/bundles/CoreBundle/Config/parameters.php')
+            'parameters'    => $event->getParametersFromConfig('MauticCoreBundle')
         ));
     }
 
@@ -46,15 +46,24 @@ class ConfigSubscriber extends CommonSubscriber
     {
         $values = $event->getConfig();
 
-        $passwords = array(
-            'mailer_password'       => $values['coreconfig']['mailer_password'],
-            'transifex_password'    => $values['coreconfig']['transifex_password']
-        );
+        // Preserve existing value
+        $event->unsetIfEmpty('transifex_password');
 
-        foreach ($passwords as $key => $password) {
-            // Check to ensure we don't save a blank password to the config which may remove the user's old password
-            if ($password == '') {
-                unset($values['coreconfig'][$key]);
+        // Check if the selected locale has been downloaded already, fetch it if not
+        $installedLanguages = $this->factory->getParameter('supported_languages');
+
+        if (!array_key_exists($values['coreconfig']['locale'], $installedLanguages)) {
+            /** @var \Mautic\CoreBundle\Helper\LanguageHelper $languageHelper */
+            $languageHelper = $this->factory->getHelper('language');
+
+            $fetchLanguage = $languageHelper->extractLanguagePackage($values['coreconfig']['locale']);
+
+            // If there is an error, fall back to 'en_US' as it is our system default
+            if ($fetchLanguage['error']) {
+                $values['coreconfig']['locale'] = 'en_US';
+
+                // TODO - Raise a flash message
+                $this->factory->getSession()->getFlashBag()->add('notice', 'mautic.core.could.not.set.language');
             }
         }
 

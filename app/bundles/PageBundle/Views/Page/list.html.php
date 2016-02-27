@@ -15,19 +15,16 @@ $view->extend('MauticPageBundle:Page:index.html.php');
             <table class="table table-hover table-striped table-bordered pagetable-list" id="pageTable">
                 <thead>
                 <tr>
-                    <th class="col-page-actions pl-20">
-                        <div class="checkbox-inline custom-primary">
-                        <label class="mb-0 pl-10">
-                            <input type="checkbox" id="customcheckbox-one0" value="1" data-toggle="checkall" data-target="#pageTable">
-                            <span></span>
-                        </label>
-                        </div>
-                    </th>
                     <?php
+                    echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
+                        'checkall' => 'true',
+                        'target'   => '#pageTable'
+                    ));
+
                     echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                         'sessionVar' => 'page',
                         'orderBy'    => 'p.title',
-                        'text'       => 'mautic.page.thead.title',
+                        'text'       => 'mautic.core.title',
                         'class'      => 'col-page-title',
                         'default'    => true
                     ));
@@ -35,7 +32,7 @@ $view->extend('MauticPageBundle:Page:index.html.php');
                     echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                         'sessionVar' => 'page',
                         'orderBy'    => 'c.title',
-                        'text'       => 'mautic.page.thead.category',
+                        'text'       => 'mautic.core.category',
                         'class'      => 'visible-md visible-lg col-page-category'
                     ));
 
@@ -43,14 +40,14 @@ $view->extend('MauticPageBundle:Page:index.html.php');
                         'sessionVar' => 'page',
                         'orderBy'    => 'p.hits',
                         'text'       => 'mautic.page.thead.hits',
-                        'class'      => 'col-page-hits'
+                        'class'      => 'col-page-hits visible-md visible-lg'
                     ));
 
                     echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                         'sessionVar' => 'page',
                         'orderBy'    => 'p.id',
-                        'text'       => 'mautic.page.thead.id',
-                        'class'      => 'col-page-id'
+                        'text'       => 'mautic.core.id',
+                        'class'      => 'col-page-id visible-md visible-lg'
                     ));
                     ?>
                 </tr>
@@ -77,35 +74,29 @@ $view->extend('MauticPageBundle:Page:index.html.php');
                             ?>
                         </td>
                         <td>
-                            <?php echo $view->render('MauticCoreBundle:Helper:publishstatus_icon.html.php',array(
-                                'item'       => $item,
-                                'model'      => 'page.page'
-                            )); ?>
-                            <a href="<?php echo $view['router']->generate('mautic_page_action',
-                                array("objectAction" => "view", "objectId" => $item->getId())); ?>"
-                               data-toggle="ajax">
+                            <?php echo $view->render('MauticCoreBundle:Helper:publishstatus_icon.html.php',array('item' => $item, 'model' => 'page.page')); ?>
+                            <a href="<?php echo $view['router']->generate('mautic_page_action', array("objectAction" => "view", "objectId" => $item->getId())); ?>" data-toggle="ajax">
                                 <?php echo $item->getTitle(); ?> (<?php echo $item->getAlias(); ?>)
-                            </a>
-                            <?php
-                            $hasVariants   = count($variantChildren);
-                            $hasTranslations = count($translationChildren);
-                            if ($hasVariants || $hasTranslations): ?>
-                            <span>
+                                <?php
+                                $hasVariants   = count($variantChildren);
+                                $hasTranslations = count($translationChildren);
+                                if ($hasVariants || $hasTranslations): ?>
+                                    <span>
                                 <?php if ($hasVariants): ?>
-                                    <i class="fa fa-fw fa-sitemap"></i>
+                                        <span data-toggle="tooltip" title="<?php echo $view['translator']->trans('mautic.page.icon_tooltip.abtest'); ?>"><i class="fa fa-fw fa-sitemap"></i></span>
                                 <?php endif; ?>
-                                <?php if ($hasTranslations): ?>
-                                    <i class="fa fa-fw fa-language"></i>
+                                        <?php if ($hasTranslations): ?>
+                                        <span data-toggle="tooltip" title="<?php echo $view['translator']->trans('mautic.page.icon_tooltip.translation'); ?>"><i class="fa fa-fw fa-language"></i></span>
+                                        <?php endif; ?>
+                                 </span>
                                 <?php endif; ?>
-                            </span>
-                        <?php endif; ?>
+                            </a>
                         </td>
                         <td class="visible-md visible-lg">
                             <?php $category = $item->getCategory(); ?>
                             <?php $catName  = ($category) ? $category->getTitle() : $view['translator']->trans('mautic.core.form.uncategorized'); ?>
                             <?php $color    = ($category) ? '#' . $category->getColor() : 'inherit'; ?>
-                            <span class="label label-default pa-5" style="background: <?php echo $color; ?>;"> </span>
-                            <span><?php echo $catName; ?></span>
+                            <span style="white-space: nowrap;"><span class="label label-default pa-4" style="border: 1px solid #d5d5d5; background: <?php echo $color; ?>;"> </span> <span><?php echo $catName; ?></span></span>
                         </td>
                         <td class="visible-md visible-lg"><?php echo $item->getHits(); ?></td>
                         <td class="visible-md visible-lg"><?php echo $item->getId(); ?></td>

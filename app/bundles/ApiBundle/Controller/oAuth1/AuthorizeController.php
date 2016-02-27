@@ -7,7 +7,7 @@
  * @license     GNU/GPLv3 http://www.gnu.org/licenses/gpl-3.0.html
  */
 
-namespace Mautic\ApiBundle\Controller\OAuth1;
+namespace Mautic\ApiBundle\Controller\oAuth1;
 
 use Bazinga\OAuthServerBundle\Model\RequestTokenInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\Controller;
@@ -44,7 +44,13 @@ class AuthorizeController extends Controller
             throw new AccessDeniedException('This user does not have access to this section.');
         }
 
-        $token = $tokenProvider->loadRequestTokenByToken($oauth_token);
+        $token    = $tokenProvider->loadRequestTokenByToken($oauth_token);
+        $consumer = $token->getConsumer();
+
+        $restricted_oauth_callback = $consumer->getCallback();
+        if (!empty($restricted_oauth_callback) && strpos($oauth_callback, $restricted_oauth_callback) !== 0) {
+            throw new AccessDeniedException('Callback is not valid.');
+        }
 
         if ($token instanceof RequestTokenInterface) {
             $tokenProvider->setUserForRequestToken($token, $securityContext->getToken()->getUser());

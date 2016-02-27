@@ -13,7 +13,7 @@ use Doctrine\ORM\EntityManager;
 use Mautic\CoreBundle\Entity\IpAddress;
 use Mautic\CoreBundle\Exception\FileNotFoundException;
 use Mautic\CoreBundle\Helper\DateTimeHelper;
-use Mautic\CoreBundle\Helper\MailHelper;
+use Mautic\EmailBundle\Helper\MailHelper;
 use Mautic\CoreBundle\Templating\Helper\ThemeHelper;
 use Mautic\UserBundle\Entity\User;
 use Symfony\Bundle\FrameworkBundle\Routing\Router;
@@ -45,6 +45,12 @@ class MauticFactory
     private $entityManager = null;
 
     /**
+     * @var MailHelper
+     */
+    private $mailHelper = null;
+
+
+    /**
      * @param ContainerInterface $container
      */
     public function __construct(ContainerInterface $container)
@@ -70,21 +76,25 @@ class MauticFactory
         if (!array_key_exists($name, $models)) {
             $parts = explode('.', $name);
 
+            // @deprecated support for addon in 1.1.4; to be removed in 2.0
             if ($parts[0] == 'addon' && $parts[1] != 'addon') {
+                // @deprecated 1.1.4; to be removed in 2.0; BC support for MauticAddon
                 $namespace = 'MauticAddon';
+                array_shift($parts);
+            } elseif ($parts[0] == 'plugin' && $parts[1] != 'plugin') {
+                $namespace = 'MauticPlugin';
                 array_shift($parts);
             } else {
                 $namespace = 'Mautic';
             }
 
             if (count($parts) !== 2) {
-                throw new NotAcceptableHttpException($name . " is not an acceptable model name.");
+                throw new NotAcceptableHttpException($name." is not an acceptable model name.");
             }
 
-            $modelClass = '\\'.$namespace.'\\' . ucfirst($parts[0]) . 'Bundle\\Model\\' . ucfirst($parts[1]) . 'Model';
-
+            $modelClass = '\\'.$namespace.'\\'.ucfirst($parts[0]).'Bundle\\Model\\'.ucfirst($parts[1]).'Model';
             if (!class_exists($modelClass)) {
-                throw new NotAcceptableHttpException($name . " is not an acceptable model name.");
+                throw new NotAcceptableHttpException($name." is not an acceptable model name.");
             }
 
             $models[$name] = new $modelClass($this);
@@ -200,7 +210,7 @@ class MauticFactory
         static $schemaHelpers = array();
 
         if (empty($schemaHelpers[$type])) {
-            $className            = "\\Mautic\\CoreBundle\\Doctrine\\Helper\\" . ucfirst($type).'SchemaHelper';
+            $className = "\\Mautic\\CoreBundle\\Doctrine\\Helper\\".ucfirst($type).'SchemaHelper';
             if ($type == "table") {
                 //get the column helper as well
                 $columnHelper         = $this->getSchemaHelper('column');
@@ -221,10 +231,21 @@ class MauticFactory
     /**
      * Retrieves Translator
      *
-     * @return \Symfony\Bundle\FrameworkBundle\Translation\Translator
+     * @return \Mautic\CoreBundle\Translation\Translator
      */
     public function getTranslator()
     {
+        if (defined('IN_MAUTIC_CONSOLE')) {
+            /** @var \Mautic\CoreBundle\Translation\Translator $translator */
+            $translator = $this->container->get('translator');
+
+            $translator->setLocale(
+                $this->getParameter('locale')
+            );
+
+            return $translator;
+        }
+
         return $this->container->get('translator');
     }
 
@@ -245,7 +266,7 @@ class MauticFactory
      */
     public function getTemplating()
     {
-        if (php_sapi_name() == 'cli') {
+        if (defined('IN_MAUTIC_CONSOLE')) {
             //enter the request scope in order to be use the templating.helper.assets service
             $this->container->enterScope('request');
             $this->container->set('request', new Request(), 'request');
@@ -274,11 +295,12 @@ class MauticFactory
         $request = $this->container->get('request_stack')->getCurrentRequest();
         if (empty($request)) {
             //likely in a test as the request is not populated for outside the container
-            $request = Request::createFromGlobals();
+            $request      = Request::createFromGlobals();
             $requestStack = new RequestStack();
             $requestStack->push($request);
             $this->requestStack = $requestStack;
         }
+
         return $request;
     }
 
@@ -305,7 +327,7 @@ class MauticFactory
     /**
      * Retrieves a Mautic parameter
      *
-     * @param $id
+     * @param       $id
      * @param mixed $default
      *
      * @return bool|mixed
@@ -317,7 +339,7 @@ class MauticFactory
             return MAUTIC_TABLE_PREFIX;
         }
 
-        return ($this->container->hasParameter('mautic.' . $id)) ? $this->container->getParameter('mautic.' . $id) : $default;
+        return ($this->container->hasParameter('mautic.'.$id)) ? $this->container->getParameter('mautic.'.$id) : $default;
     }
 
     /**
@@ -335,7 +357,7 @@ class MauticFactory
 
         if (!empty($string)) {
             if ($string instanceof \DateTime) {
-                $key = $string->format('U') . ".$format.$tz";
+                $key = $string->format('U').".$format.$tz";
             } else {
                 $key = "$string.$format.$tz";
             }
@@ -375,19 +397,33 @@ class MauticFactory
     {
         $paths = $this->getParameter('paths');
 
-        if ($name == 'currentTheme') {
+        if ($name == 'currentTheme' || $name == 'current_theme') {
             $theme = $this->getParameter('theme');
-            $path  = $paths['themes'] . "/$theme";
+            $path  = $paths['themes']."/$theme";
         } elseif ($name == 'cache' || $name == 'log') {
             //these are absolute regardless as they are configurable
             return $this->container->getParameter("kernel.{$name}_dir");
+        } elseif ($name == 'images') {
+            $path = $this->getParameter('image_path');
+            if (substr($path, -1) === '/') {
+                $path = substr($path, 0, -1);
+            }
         } elseif (isset($paths[$name])) {
-            $path  = $paths[$name];
+            $path = $paths[$name];
+        } elseif (strpos($name, '_root') !== false) {
+            // Assume system root if one is not set specifically
+            $path = $paths['root'];
         } else {
             throw new \InvalidArgumentException("$name does not exist.");
         }
 
-        return ($fullPath) ? $paths['root'] . '/' . $path : $path;
+        if ($fullPath) {
+            $rootPath = (!empty($paths[$name . '_root'])) ? $paths[$name . '_root'] : $paths['root'];
+
+            return $rootPath . '/' . $path;
+        }
+
+        return $path;
     }
 
     /**
@@ -401,6 +437,7 @@ class MauticFactory
     {
         /** @var \AppKernel $kernel */
         $kernel = $this->container->get('kernel');
+
         return $kernel->getLocalConfigFile($checkExists);
     }
 
@@ -428,9 +465,11 @@ class MauticFactory
      * returns a ThemeHelper instance for the given theme
      *
      * @param string $theme
-     * @param bool $throwException
+     * @param bool   $throwException
      *
-     * @return \Mautic\CoreBundle\Templating\Helper\ThemeHelper
+     * @return mixed
+     * @throws FileNotFoundException
+     * @throws \Exception
      */
     public function getTheme($theme = 'current', $throwException = false)
     {
@@ -444,20 +483,32 @@ class MauticFactory
                     if ($e instanceof FileNotFoundException) {
                         //theme wasn't found so just use the first available
                         $themes = $this->getInstalledThemes();
-                        foreach ($themes as $installedTheme => $name) {
-                            try {
-                                if (isset($themeHelpers[$installedTheme])) {
-                                    //theme found so return it
-                                    return $themeHelpers[$installedTheme];
-                                } else {
-                                    $themeHelpers[$installedTheme] = new ThemeHelper($this, $installedTheme);
-                                    //found so use this theme
-                                    $theme = $installedTheme;
-                                    $found = true;
-                                    break;
+
+                        if ($theme !== 'current') {
+                            //first try the default theme
+                            $default = $this->getParameter('theme');
+                            if (isset($themes[$default])) {
+                                $themeHelpers[$default] = new ThemeHelper($this, $default);
+                                $found                  = true;
+                            }
+                        }
+
+                        if (empty($found)) {
+                            foreach ($themes as $installedTheme => $name) {
+                                try {
+                                    if (isset($themeHelpers[$installedTheme])) {
+                                        //theme found so return it
+                                        return $themeHelpers[$installedTheme];
+                                    } else {
+                                        $themeHelpers[$installedTheme] = new ThemeHelper($this, $installedTheme);
+                                        //found so use this theme
+                                        $theme = $installedTheme;
+                                        $found = true;
+                                        break;
+                                    }
+                                } catch (\Exception $e) {
+                                    continue;
                                 }
-                            } catch (\Exception $e) {
-                                continue;
                             }
                         }
                     }
@@ -494,8 +545,8 @@ class MauticFactory
 
             $themes[$specificFeature] = array();
             foreach ($finder as $theme) {
-                if (file_exists($theme->getRealPath() . '/config.php')) {
-                    $config = include $theme->getRealPath() . '/config.php';
+                if (file_exists($theme->getRealPath().'/config.php')) {
+                    $config = include $theme->getRealPath().'/config.php';
                     if ($specificFeature != 'all') {
                         if (isset($config['features']) && in_array($specificFeature, $config['features'])) {
                             $themes[$specificFeature][$theme->getBasename()] = $config['name'];
@@ -513,13 +564,23 @@ class MauticFactory
     /**
      * Returns MailHelper wrapper for Swift_Message via $helper->message
      *
+     * @param bool $cleanSlate False to preserve current settings, i.e. to process batched emails
+     *
      * @return MailHelper
      */
-    public function getMailer()
+    public function getMailer($cleanSlate = true)
     {
-        return new MailHelper($this, $this->container->get('mailer'), array(
-            $this->getParameter('mailer_from_email') => $this->getParameter('mailer_from_name')
-        ));
+        if ($this->mailHelper == null) {
+            $this->mailHelper = new MailHelper(
+                $this, $this->container->get('mailer'), array(
+                    $this->getParameter('mailer_from_email') => $this->getParameter('mailer_from_name')
+                )
+            );
+        } else {
+            $this->mailHelper->reset($cleanSlate);
+        }
+
+        return $this->mailHelper;
     }
 
     /**
@@ -529,7 +590,7 @@ class MauticFactory
      */
     public function getIpAddressFromRequest()
     {
-        $request = $this->getRequest();
+        $request   = $this->getRequest();
         $ipHolders = array(
             'HTTP_CLIENT_IP',
             'HTTP_X_FORWARDED_FOR',
@@ -542,11 +603,31 @@ class MauticFactory
 
         foreach ($ipHolders as $key) {
             if ($request->server->get($key)) {
-                return $request->server->get($key);
+                $ip = $request->server->get($key);
+
+                if (strpos($ip, ',') !== false) {
+                    // Multiple IPs are present so use the last IP which should be the most reliable IP that last connected to the proxy
+                    $ips = explode(',', $ip);
+                    array_walk($ips, create_function('&$val', '$val = trim($val);'));
+
+                    if ($internalIps = $this->getParameter('do_not_track_internal_ips')) {
+                        $ips = array_diff($ips, $internalIps);
+                    }
+
+                    $ip = end($ips);
+                }
+
+                $ip = trim($ip);
+
+                // Validate IP
+                if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 | FILTER_FLAG_IPV6 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+
+                    return $ip;
+                }
             }
         }
 
-        // if everything else failes
+        // if everything else fails
         return '127.0.0.1';
     }
 
@@ -571,12 +652,47 @@ class MauticFactory
         }
 
         if (empty($ipAddress[$ip])) {
-            $repo = $this->getEntityManager()->getRepository('MauticCoreBundle:IpAddress');
+            $repo      = $this->getEntityManager()->getRepository('MauticCoreBundle:IpAddress');
             $ipAddress = $repo->findOneByIpAddress($ip);
+            $saveIp    = ($ipAddress === null);
 
             if ($ipAddress === null) {
                 $ipAddress = new IpAddress();
-                $ipAddress->setIpAddress($ip, $this->getSystemParameters());
+                $ipAddress->setIpAddress($ip);
+            }
+
+            // Ensure the do not track list is inserted
+            $doNotTrack  = $this->getParameter('do_not_track_ips', array());
+            if (!is_array($doNotTrack)) {
+                $doNotTrack = array();
+            }
+            $internalIps = $this->getParameter('do_not_track_internal_ips', array());
+            if (!is_array($internalIps)) {
+                $internalIps = array();
+            }
+            $doNotTrack  = array_merge(array('127.0.0.1', '::1'), $doNotTrack, $internalIps);
+            $ipAddress->setDoNotTrackList($doNotTrack);
+
+            $details = $ipAddress->getIpDetails();
+            if ($ipAddress->isTrackable() && empty($details['city']))  {
+                // Get the IP lookup service
+
+                // Fetch the data
+                /** @var \Mautic\CoreBundle\IpLookup\AbstractLookup $ipLookup */
+                $ipLookup = $this->container->get('mautic.ip_lookup');
+
+                if ($ipLookup) {
+                    $details = $ipLookup->setIpAddress($ip)
+                        ->getDetails();
+
+                    $ipAddress->setIpDetails($details);
+
+                    // Save new details
+                    $saveIp = true;
+                }
+            }
+
+            if ($saveIp) {
                 $repo->saveEntity($ipAddress);
             }
 
@@ -599,7 +715,9 @@ class MauticFactory
     /**
      * Get Symfony's logger
      *
-     * @return \Symfony\Bridge\Monolog\Logger
+     * @param bool|false $system
+     *
+     * @return \Monolog\Logger
      */
     public function getLogger($system = false)
     {
@@ -627,7 +745,7 @@ class MauticFactory
             case 'template.form':
                 return $this->container->get('templating.helper.form');
             default:
-                return $this->container->get('mautic.helper.' . $helper);
+                return $this->container->get('mautic.helper.'.$helper);
         }
     }
 
@@ -644,20 +762,80 @@ class MauticFactory
     /**
      * Get's an array of details for Mautic core bundles
      *
-     * @return mixed
+     * @param bool|false $includePlugins
+     *
+     * @return array|mixed
      */
-    public function getMauticBundles()
+    public function getMauticBundles($includePlugins = false)
     {
-        return $this->container->getParameter('mautic.bundles');
+        $bundles = $this->container->getParameter('mautic.bundles');
+        if ($includePlugins) {
+            $plugins  = $this->container->getParameter('mautic.plugin.bundles');
+            $bundles = array_merge($bundles, $plugins);
+        }
+
+        return $bundles;
     }
 
     /**
-     * Get's an array of details for enabled Mautic addons
+     * Get's an array of details for enabled Mautic plugins
      *
      * @return array
      */
-    public function getEnabledAddons()
+    public function getPluginBundles()
     {
-        return $this->getKernel()->getAddonBundles();
+        return $this->getKernel()->getPluginBundles();
+    }
+
+    /**
+     * Gets an array of a specific bundle's config settings
+     *
+     * @param        $bundleName
+     * @param string $configKey
+     * @param bool   $includePlugins
+     *
+     * @return mixed
+     * @throws \Exception
+     */
+    public function getBundleConfig($bundleName, $configKey = '', $includePlugins = false)
+    {
+        // get the configs
+        $configFiles = $this->getMauticBundles($includePlugins);
+
+        // if no bundle name specified we throw
+        if (!$bundleName) {
+            throw new \Exception('Bundle name not supplied');
+        }
+
+        // check for the bundle config requested actually exists
+        if (!array_key_exists($bundleName, $configFiles)) {
+            throw new \Exception('Bundle '.$bundleName.' does not exist');
+        }
+
+        // get the specific bundle's configurations
+        $bundleConfig = $configFiles[$bundleName]['config'];
+
+        // no config key supplied so just return the bundle's config
+        if (!$configKey) {
+            return $bundleConfig;
+        }
+
+        // check that the key exists
+        if (!array_key_exists($configKey, $bundleConfig)) {
+            throw new \Exception('Key '.$configKey.' does not exist in bundle '.$bundleName);
+        }
+
+        // we didn't throw so we can send the key value
+        return $bundleConfig[$configKey];
+    }
+
+    /**
+     * @param $service
+     *
+     * @return bool
+     */
+    public function serviceExists($service)
+    {
+        return $this->container->has($service);
     }
 }

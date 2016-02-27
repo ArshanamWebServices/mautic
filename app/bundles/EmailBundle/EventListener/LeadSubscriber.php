@@ -9,6 +9,7 @@
 namespace Mautic\EmailBundle\EventListener;
 
 use Mautic\CoreBundle\EventListener\CommonSubscriber;
+use Mautic\LeadBundle\Event\LeadMergeEvent;
 use Mautic\LeadBundle\Event\LeadTimelineEvent;
 use Mautic\LeadBundle\LeadEvents;
 
@@ -26,7 +27,8 @@ class LeadSubscriber extends CommonSubscriber
     static public function getSubscribedEvents()
     {
         return array(
-            LeadEvents::TIMELINE_ON_GENERATE => array('onTimelineGenerate', 0)
+            LeadEvents::TIMELINE_ON_GENERATE => array('onTimelineGenerate', 0),
+            LeadEvents::LEAD_POST_MERGE      => array('onLeadMerge', 0)
         );
     }
 
@@ -38,14 +40,13 @@ class LeadSubscriber extends CommonSubscriber
     public function onTimelineGenerate(LeadTimelineEvent $event)
     {
         // Set available event types
-        $eventTypeKeySent = 'email.sent';
+        $eventTypeKeySent  = 'email.sent';
         $eventTypeNameSent = $this->translator->trans('mautic.email.sent');
         $event->addEventType($eventTypeKeySent, $eventTypeNameSent);
 
-        $eventTypeKeyRead = 'email.read';
+        $eventTypeKeyRead  = 'email.read';
         $eventTypeNameRead = $this->translator->trans('mautic.email.read');
         $event->addEventType($eventTypeKeyRead, $eventTypeNameRead);
-
 
         // Decide if those events are filtered
         $filters = $event->getEventFilters();
@@ -67,31 +68,47 @@ class LeadSubscriber extends CommonSubscriber
 
         // Add the events to the event array
         foreach ($stats as $stat) {
-            // Email Sent
-            if ($stat['dateSent'] && $event->isApplicable($eventTypeKeySent)) {
-                $event->addEvent(array(
-                    'event'           => $eventTypeKeySent,
-                    'eventLabel'      => $eventTypeNameSent,
-                    'timestamp'       => $stat['dateSent'],
-                    'extra'           => array(
-                        'stats' => $stat
-                    ),
-                    'contentTemplate' => 'MauticEmailBundle:SubscribedEvents\Timeline:index.html.php'
-                ));
+            if ($stat['dateRead'] && $event->isApplicable($eventTypeKeyRead, true)) {
+                $event->addEvent(
+                    array(
+                        'event'           => $eventTypeKeyRead,
+                        'eventLabel'      => $eventTypeNameRead,
+                        'timestamp'       => $stat['dateRead'],
+                        'extra'           => array(
+                            'stat' => $stat,
+                            'type' => 'read'
+                        ),
+                        'contentTemplate' => 'MauticEmailBundle:SubscribedEvents\Timeline:index.html.php'
+                    )
+                );
             }
 
             // Email read
-            if ($stat['dateRead'] && $event->isApplicable($eventTypeKeyRead)) {
-                $event->addEvent(array(
-                    'event'     => $eventTypeKeyRead,
-                    'eventLabel' => $eventTypeNameRead,
-                    'timestamp' => $stat['dateRead'],
-                    'extra'     => array(
-                        'stats' => $stat
-                    ),
-                    'contentTemplate' => 'MauticEmailBundle:Timeline:index.html.php'
-                ));
+            if ($stat['dateSent'] && $event->isApplicable($eventTypeKeySent)) {
+                $event->addEvent(
+                    array(
+                        'event'           => $eventTypeKeySent,
+                        'eventLabel'      => $eventTypeNameSent,
+                        'timestamp'       => $stat['dateSent'],
+                        'extra'           => array(
+                            'stat' => $stat,
+                            'type' => 'sent'
+                        ),
+                        'contentTemplate' => 'MauticEmailBundle:SubscribedEvents\Timeline:index.html.php'
+                    )
+                );
             }
         }
+    }
+
+    /**
+     * @param LeadMergeEvent $event
+     */
+    public function onLeadMerge(LeadMergeEvent $event)
+    {
+        $this->factory->getEntityManager()->getRepository('MauticEmailBundle:Stat')->updateLead(
+            $event->getLoser()->getId(),
+            $event->getVictor()->getId()
+        );
     }
 }

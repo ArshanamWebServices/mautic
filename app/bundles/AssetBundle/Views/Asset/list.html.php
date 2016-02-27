@@ -14,19 +14,16 @@ $view->extend('MauticAssetBundle:Asset:index.html.php');
         <table class="table table-hover table-striped table-bordered asset-list" id="assetTable">
             <thead>
             <tr>
-                <th class="visible-md visible-lg col-asset-actions pl-20">
-                    <div class="checkbox-inline custom-primary">
-                        <label class="mb-0 pl-10">
-                            <input type="checkbox" id="customcheckbox-one0" value="1" data-toggle="checkall" data-target="#assetTable">
-                            <span></span>
-                        </label>
-                    </div>
-                </th>
                 <?php
+                echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
+                    'checkall' => 'true',
+                    'target'   => '#assetTable'
+                ));
+
                 echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                     'sessionVar' => 'asset',
                     'orderBy'    => 'a.title',
-                    'text'       => 'mautic.asset.asset.thead.title',
+                    'text'       => 'mautic.core.title',
                     'class'      => 'col-asset-title',
                     'default'    => true
                 ));
@@ -34,7 +31,7 @@ $view->extend('MauticAssetBundle:Asset:index.html.php');
                 echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                     'sessionVar' => 'asset',
                     'orderBy'    => 'c.title',
-                    'text'       => 'mautic.asset.asset.thead.category',
+                    'text'       => 'mautic.core.category',
                     'class'      => 'visible-md visible-lg col-asset-category'
                 ));
 
@@ -48,7 +45,7 @@ $view->extend('MauticAssetBundle:Asset:index.html.php');
                 echo $view->render('MauticCoreBundle:Helper:tableheader.html.php', array(
                     'sessionVar' => 'asset',
                     'orderBy'    => 'a.id',
-                    'text'       => 'mautic.asset.asset.thead.id',
+                    'text'       => 'mautic.core.id',
                     'class'      => 'visible-md visible-lg col-asset-id'
                 ));
                 ?>
@@ -57,7 +54,7 @@ $view->extend('MauticAssetBundle:Asset:index.html.php');
             <tbody>
             <?php foreach ($items as $k => $item): ?>
                 <tr>
-                    <td class="visible-md visible-lg">
+                    <td>
                         <?php
                         echo $view->render('MauticCoreBundle:Helper:list_actions.html.php', array(
                             'item'       => $item,
@@ -103,8 +100,7 @@ $view->extend('MauticAssetBundle:Asset:index.html.php');
                         <?php $category = $item->getCategory(); ?>
                         <?php $catName  = ($category) ? $category->getTitle() : $view['translator']->trans('mautic.core.form.uncategorized'); ?>
                         <?php $color    = ($category) ? '#' . $category->getColor() : 'inherit'; ?>
-                        <span class="label label-default pa-5" style="background: <?php echo $color; ?>;"> </span>
-                        <span><?php echo $catName; ?></span>
+                        <span style="white-space: nowrap;"><span class="label label-default pa-4" style="border: 1px solid #d5d5d5; background: <?php echo $color; ?>;"> </span> <span><?php echo $catName; ?></span></span>
                     </td>
                     <td class="visible-md visible-lg"><?php echo $item->getDownloadCount(); ?></td>
                     <td class="visible-md visible-lg"><?php echo $item->getId(); ?></td>

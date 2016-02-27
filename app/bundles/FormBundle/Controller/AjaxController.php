@@ -27,12 +27,13 @@ class AjaxController extends CommonAjaxController
      */
     protected function reorderFieldsAction(Request $request, $name = 'fields')
     {
-        $dataArray  = array('success' => 0);
-        $sessionId  = InputHelper::clean($request->request->get('formId'));
+        $dataArray   = array('success' => 0);
+        $sessionId   = InputHelper::clean($request->request->get('formId'));
         $sessionName = 'mautic.form.'.$sessionId.'.' . $name . '.modified';
-        $session    = $this->factory->getSession();
-        $order      = InputHelper::clean($request->request->get('mauticform_action'));
-        $components = $session->get($sessionName);
+        $session     = $this->factory->getSession();
+        $orderName   = ($name == 'fields') ? 'mauticform' : 'mauticform_action';
+        $order       = InputHelper::clean($request->request->get($orderName));
+        $components  = $session->get($sessionName);
 
         if (!empty($order) && !empty($components)) {
             $components = array_replace(array_flip($order), $components);
@@ -65,6 +66,44 @@ class AjaxController extends CommonAjaxController
 
         // Download stats per time period
         $dataArray['stats'] = $this->factory->getEntityManager()->getRepository('MauticFormBundle:Submission')->getSubmissionsSince($formId, $amount, $unit);
+        $dataArray['success']  = 1;
+
+        return $this->sendJsonResponse($dataArray);
+    }
+
+    /**
+     * @param Request $request
+     * @return \Symfony\Component\HttpFoundation\JsonResponse
+     */
+    protected function updateFormFieldsAction(Request $request)
+    {
+        $formId    = InputHelper::int($request->request->get('formId'));
+        $dataArray = array('success' => 0);
+        $model = $this->factory->getModel('form');
+        $entity = $model->getEntity($formId);
+        $formFields = $entity->getFields();
+        $fields = array();
+
+        foreach ($formFields as $field) {
+            if ($field->getType() != 'button') {
+                $properties = $field->getProperties();
+                $options = array();
+
+                if (!empty($properties['list']['list'])) {
+                    $options = $properties['list']['list'];
+                }
+
+                $fields[] = array(
+                    'id'      => $field->getId(),
+                    'label'   => $field->getLabel(),
+                    'alias'   => $field->getAlias(),
+                    'type'    => $field->getType(),
+                    'options' => $options
+                );
+            }
+        }
+
+        $dataArray['fields'] = $fields;
         $dataArray['success']  = 1;
 
         return $this->sendJsonResponse($dataArray);

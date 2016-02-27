@@ -12,6 +12,8 @@ use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpKernel\HttpKernelInterface;
 use Symfony\Component\HttpKernel\Kernel;
+use Symfony\Component\HttpKernel\Config\EnvParametersResource;
+use Symfony\Component\HttpKernel\DependencyInjection;
 
 /**
  * Mautic Application Kernel
@@ -31,14 +33,14 @@ class AppKernel extends Kernel
      *
      * @const integer
      */
-    const MINOR_VERSION = 0;
+    const MINOR_VERSION = 2;
 
     /**
      * Patch version number
      *
      * @const integer
      */
-    const PATCH_VERSION = 0;
+    const PATCH_VERSION = 4;
 
     /**
      * Extra version identifier
@@ -48,30 +50,27 @@ class AppKernel extends Kernel
      *
      * @const string
      */
-    const EXTRA_VERSION = '-beta3';
+    const EXTRA_VERSION = '';
 
     /**
      * @var array
      */
-    private $addonBundles  = array();
+    private $pluginBundles  = array();
 
     /**
      * {@inheritdoc}
      */
     public function handle(Request $request, $type = HttpKernelInterface::MASTER_REQUEST, $catch = true)
     {
+
         if (strpos($request->getRequestUri(), 'installer') !== false || !$this->isInstalled()) {
             define('MAUTIC_INSTALLER', 1);
-        } else {
-            //set the table prefix before boot
-            $localParams = $this->getLocalParams();
-            $prefix      = isset($localParams['db_table_prefix']) ? $localParams['db_table_prefix'] : '';
-            define('MAUTIC_TABLE_PREFIX', $prefix);
         }
 
         if (false === $this->booted) {
             $this->boot();
         }
+
         //the context is not populated at this point so have to do it manually
         $router = $this->getContainer()->get('router');
         $requestContext = new \Symfony\Component\Routing\RequestContext();
@@ -95,6 +94,21 @@ class AppKernel extends Kernel
             return new RedirectResponse($base . '/installer');
         }
 
+        // Check for an an active db connection and die with error if unable to connect
+        if (!defined('MAUTIC_INSTALLER')) {
+            $db = $this->getContainer()->get('database_connection');
+            try {
+                $db->connect();
+            } catch (\Exception $e) {
+                error_log($e);
+                throw new \Mautic\CoreBundle\Exception\DatabaseConnectionException(
+                    $this->getContainer()->get('translator')->trans('mautic.core.db.connection.error', array(
+                            '%code%' => $e->getCode()
+                        )
+                    ));
+            }
+        }
+
         return parent::handle($request, $type, $catch);
     }
 
@@ -109,58 +123,85 @@ class AppKernel extends Kernel
             new Symfony\Bundle\MonologBundle\MonologBundle(),
             new Symfony\Bundle\SwiftmailerBundle\SwiftmailerBundle(),
             new Doctrine\Bundle\DoctrineBundle\DoctrineBundle(),
+            new Doctrine\Bundle\DoctrineCacheBundle\DoctrineCacheBundle(),
             new Doctrine\Bundle\FixturesBundle\DoctrineFixturesBundle(),
             new Doctrine\Bundle\MigrationsBundle\DoctrineMigrationsBundle(),
-            new Sensio\Bundle\FrameworkExtraBundle\SensioFrameworkExtraBundle(),
             new Knp\Bundle\MenuBundle\KnpMenuBundle(),
             new FOS\OAuthServerBundle\FOSOAuthServerBundle(),
             new Bazinga\OAuthServerBundle\BazingaOAuthServerBundle(),
             new FOS\RestBundle\FOSRestBundle(),
             new JMS\SerializerBundle\JMSSerializerBundle(),
+            new Oneup\UploaderBundle\OneupUploaderBundle(),
         );
 
         //dynamically register Mautic Bundles
         $searchPath = __DIR__ . '/bundles';
         $finder     = new \Symfony\Component\Finder\Finder();
         $finder->files()
+            ->followLinks()
             ->in($searchPath)
             ->depth('1')
             ->name('*Bundle.php');
 
         foreach ($finder as $file) {
-            $path      = substr($file->getRealPath(), strlen($searchPath) + 1, -4);
-            $parts     = explode(DIRECTORY_SEPARATOR, $path);
-            $class     = array_pop($parts);
-            $namespace = "Mautic\\" . implode('\\', $parts);
-            $class     = $namespace . '\\' . $class;
+            $dirname  = basename($file->getRelativePath());
+            $filename = substr($file->getFilename(), 0, -4);
+            $class    = '\\Mautic' . '\\' . $dirname . '\\' . $filename;
             if (class_exists($class)) {
                 $bundleInstance = new $class();
-                if (method_exists($bundleInstance, 'isEnabled')) {
-                    if ($bundleInstance->isEnabled()) {
-                        $bundles[] = $bundleInstance;
-                    }
-                } else {
-                    $bundles[] = $bundleInstance;
-                }
+                $bundles[]      = $bundleInstance;
+
+                unset($bundleInstance);
             }
         }
 
-        //dynamically register Mautic Addon Bundles
-        $searchPath = dirname(__DIR__) . '/addons';
+        //dynamically register Mautic Plugin Bundles
+        $searchPath = dirname(__DIR__) . '/plugins';
         $finder     = new \Symfony\Component\Finder\Finder();
         $finder->files()
+            ->followLinks()
             ->depth('1')
             ->in($searchPath)
             ->name('*Bundle.php');
 
         foreach ($finder as $file) {
-            $path      = substr($file->getRealPath(), strlen($searchPath) + 1, -4);
-            $parts     = explode(DIRECTORY_SEPARATOR, $path);
-            $class     = array_pop($parts);
-            $namespace = "MauticAddon\\" . implode('\\', $parts);
-            $class     = $namespace . '\\' . $class;
+            $dirname  = basename($file->getRelativePath());
+            $filename = substr($file->getFilename(), 0, -4);
+
+            $class = '\\MauticPlugin' . '\\' . $dirname . '\\' . $filename;
             if (class_exists($class)) {
-                $bundles[] = new $class();
+                $plugin = new $class();
+
+                if ($plugin instanceof \Symfony\Component\HttpKernel\Bundle\Bundle) {
+                    $bundles[] = $plugin;
+                }
+
+                unset($plugin);
+            }
+        }
+
+        // @deprecated 1.1.4; bc support for MauticAddon namespace; to be removed in 2.0
+        $searchPath = dirname(__DIR__) . '/addons';
+        $finder     = new \Symfony\Component\Finder\Finder();
+        $finder->files()
+            ->followLinks()
+            ->depth('1')
+            ->in($searchPath)
+            ->name('*Bundle.php');
+
+        foreach ($finder as $file) {
+            $dirname  = basename($file->getRelativePath());
+            $filename = substr($file->getFilename(), 0, -4);
+
+            $class = '\\MauticAddon' . '\\' . $dirname . '\\' . $filename;
+            if (class_exists($class)) {
+                $addon = new $class();
+
+                if ($addon instanceof \Symfony\Component\HttpKernel\Bundle\Bundle) {
+                    $bundles[] = $addon;
+                }
+
+                unset($addon);
             }
         }
 
@@ -169,12 +210,16 @@ class AppKernel extends Kernel
             $bundles[] = new Symfony\Bundle\WebProfilerBundle\WebProfilerBundle();
             $bundles[] = new Sensio\Bundle\DistributionBundle\SensioDistributionBundle();
             $bundles[] = new Sensio\Bundle\GeneratorBundle\SensioGeneratorBundle();
-            $bundles[] = new Nelmio\ApiDocBundle\NelmioApiDocBundle();
             $bundles[] = new Webfactory\Bundle\ExceptionsBundle\WebfactoryExceptionsBundle();
         }
 
         if (in_array($this->getEnvironment(), array('test'))) {
             $bundles[] = new Liip\FunctionalTestBundle\LiipFunctionalTestBundle();
+        }
+
+        // Check for local bundle inclusion
+        if (file_exists(__DIR__ .'/config/bundles_local.php')) {
+            include __DIR__ . '/config/bundles_local.php';
         }
 
         return $bundles;
@@ -189,6 +234,13 @@ class AppKernel extends Kernel
             return;
         }
 
+        if (!defined('MAUTIC_INSTALLER') && !defined('MAUTIC_TABLE_PREFIX')) {
+            //set the table prefix before boot
+            $localParams = $this->getLocalParams();
+            $prefix      = isset($localParams['db_table_prefix']) ? $localParams['db_table_prefix'] : '';
+            define('MAUTIC_TABLE_PREFIX', $prefix);
+        }
+
         if ($this->loadClassCache) {
             $this->doLoadClassCache($this->loadClassCache[0], $this->loadClassCache[1]);
         }
@@ -199,72 +251,21 @@ class AppKernel extends Kernel
         // init container
         $this->initializeContainer();
 
-        $registeredAddonBundles = $this->container->getParameter('mautic.addon.bundles');
+        // If in console, set the table prefix since handle() is not executed
+        if (defined('IN_MAUTIC_CONSOLE') && !defined('MAUTIC_TABLE_PREFIX')) {
+            $localParams = $this->getLocalParams();
+            $prefix      = isset($localParams['db_table_prefix']) ? $localParams['db_table_prefix'] : '';
+            define('MAUTIC_TABLE_PREFIX', $prefix);
+        }
 
-        $addonBundles = array();
+        $registeredPluginBundles = $this->container->getParameter('mautic.plugin.bundles');
+
         foreach ($this->getBundles() as $name => $bundle) {
-            if ($bundle instanceof \Mautic\AddonBundle\Bundle\AddonBundleBase) {
-                //boot after it's been check to see if it's enabled
-                $addonBundles[$name] = $bundle;
-
-                //set the container for the addon helper
-                $bundle->setContainer($this->container);
-            } else {
-                $bundle->setContainer($this->container);
-                $bundle->boot();
-            }
+            $bundle->setContainer($this->container);
+            $bundle->boot();
         }
 
-        $factory = $this->container->get('mautic.factory');
-
-        $dispatcher = $factory->getDispatcher();
-        $listeners  = $dispatcher->getListeners();
-
-        // addon listeners have to be removed if disabled so loop to find MauticAddon listeners
-        $addonListeners = array();
-
-        foreach ($listeners as $event => $subscribers) {
-            foreach ($subscribers as $subscriber) {
-                if (is_array($subscriber)) {
-                    $name = is_object($subscriber[0]) ? get_class($subscriber[0]) : $subscriber[0];
-                } else {
-                    $name = $subscriber;
-                }
-
-                if (strpos($name, 'MauticAddon') !== false) {
-                    //get the name of the bundle
-                    $parts                         = explode('\\', $name);
-                    $bundlePath                    = $parts[0] . '\\' . $parts[1];
-                    $addonListeners[$bundlePath][] = array($event, $subscriber);
-                }
-            }
-        }
-
-        // It's only after we've booted that we have access to the container, so here is where we will check if addon bundles are enabled then deal with them accordingly
-        foreach ($addonBundles as $name => $bundle) {
-            if (!$bundle->isEnabled()) {
-                unset($this->bundles[$name]);
-                unset($this->bundleMap[$name]);
-                unset($registeredAddonBundles[$name]);
-
-                // remove listeners as well
-                $bundleClass = get_class($bundle);
-
-                $parts      = explode('\\', $bundleClass);
-                $bundlePath = $parts[0] . '\\' . $parts[1];
-
-                if (isset($addonListeners[$bundlePath])) {
-                    foreach ($addonListeners[$bundlePath] as $listener) {
-                        $dispatcher->removeListener($listener[0], $listener[1]);
-                    }
-                }
-            } else {
-                // boot the bundle
-                $bundle->boot();
-            }
-        }
-
-        $this->addonBundles = $registeredAddonBundles;
+        $this->pluginBundles = $registeredPluginBundles;
 
         $this->booted = true;
     }
@@ -274,9 +275,9 @@ class AppKernel extends Kernel
      *
      * @return array
      */
-    public function getAddonBundles()
+    public function getPluginBundles()
     {
-        return $this->addonBundles;
+        return $this->pluginBundles;
     }
 
     /**
@@ -304,17 +305,49 @@ class AppKernel extends Kernel
      */
     private function isInstalled()
     {
-        $params = $this->getLocalParams();
-        if (!empty($params)) {
-            // Check the DB Driver, Name, and User
-            if ((isset($params['db_driver']) && $params['db_driver'])
-                && (isset($params['db_user']) && $params['db_user'])
-                && (isset($params['db_name']) && $params['db_name'])) {
-                return true;
-            }
+        static $isInstalled = null;
+
+        if ($isInstalled === null) {
+            $params      = $this->getLocalParams();
+            $isInstalled = (is_array($params) && !empty($params['db_driver']) && !empty($params['mailer_from_name']));
         }
 
-        return false;
+        return $isInstalled;
+    }
+
+    /**
+     * @param array $params
+     *
+     * @return \Doctrine\DBAL\Connection
+     * @throws Exception
+     * @throws \Doctrine\DBAL\DBALException
+     */
+    public function getDatabaseConnection($params = array())
+    {
+        if (empty($params)) {
+            $params = $this->getLocalParams();
+        }
+
+        if (!empty($params) && !empty($params['db_driver'])) {
+            $testParams = array('driver', 'host', 'port', 'name', 'user', 'password', 'path');
+            $dbParams   = array();
+            foreach ($testParams as &$p) {
+                $param = (isset($params["db_{$p}"])) ? $params["db_{$p}"] : '';
+                if ($p == 'port') {
+                    $param = (int) $param;
+                }
+                $name  = ($p == 'name') ? 'dbname' : $p;
+                $dbParams[$name] = $param;
+            }
+
+            // Test a database connection and existence of a user
+            $db = \Doctrine\DBAL\DriverManager::getConnection($dbParams);
+            $db->connect();
+
+            return $db;
+        } else {
+            throw new \Exception('not configured');
+        }
     }
 
     /**
@@ -353,7 +386,7 @@ class AppKernel extends Kernel
      *
      * @return array
      */
-    private function getLocalParams()
+    public function getLocalParams()
     {
         static $localParameters;
 
@@ -365,7 +398,7 @@ class AppKernel extends Kernel
             if ($configFile = $this->getLocalConfigFile()) {
                 /** @var $parameters */
                 include $configFile;
-                $localParameters = $parameters;
+                $localParameters = (isset($parameters) && is_array($parameters)) ? $parameters : array();
             } else {
                 $localParameters = array();
             }
@@ -376,6 +409,12 @@ class AppKernel extends Kernel
                 include $root . '/config/parameters_local.php';
                 $localParameters = array_merge($localParameters, $parameters);
             }
+
+            foreach ($localParameters as $k => &$v) {
+                if (!empty($v) && is_string($v) && preg_match('/getenv\((.*?)\)/', $v, $match)) {
+                    $v = (string) getenv($match[1]);
+                }
+            }
         }
 
         return $localParameters;
@@ -384,7 +423,7 @@ class AppKernel extends Kernel
     /**
      * Get local config file
      *
-     * @param $checkExists If true, then return false if the file doesn't exist
+     * @param bool $checkExists If true, then return false if the file doesn't exist
      *
      * @return bool
      */
@@ -402,5 +441,106 @@ class AppKernel extends Kernel
         }
 
         return false;
+    }
+
+    /**
+     * Get the container file name or path
+     *
+     * @param bool|true $fullPath
+     *
+     * @return string
+     */
+    public function getContainerFile($fullPath = true)
+    {
+        $fileName = $this->getContainerClass() . '.php';
+
+        if ($fullPath) {
+            // Override the container class for the local instance
+            $params        = $this->getLocalParams();
+            $containerPath = (isset($params['container_path'])) ? $params['container_path'] : $this->getCacheDir();
+
+            if (!file_exists($containerPath)) {
+                @mkdir($containerPath, 0755, true);
+            }
+
+            $containerPath = (isset($params['container_path'])) ? $params['container_path'] : $this->getCacheDir();
+
+            $fileName = $containerPath . '/' . $fileName;
+        }
+
+        return $fileName;
+    }
+
+    /**
+     * Initializes the service container.
+     *
+     * The cached version of the service container is used when fresh, otherwise the
+     * container is built.
+     */
+    protected function initializeContainer()
+    {
+        $class = $this->getContainerClass();
+
+        $cache = new \Symfony\Component\Config\ConfigCache($this->getContainerFile(true), $this->debug);
+
+        $fresh = file_exists($this->getCacheDir().'/classes.php');
+        if (!$cache->isFresh()) {
+            $container = $this->buildContainer();
+            $container->compile();
+            $this->dumpContainer($cache, $container, $class, $this->getContainerBaseClass());
+
+            if ($this->debug) {
+                $fresh = false;
+            }
+        }
+
+        require_once $cache;
+
+        $this->container = new $class();
+        $this->container->set('kernel', $this);
+
+        // Warm up the cache if classes.php is missing or in dev mode
+        if (!$fresh && $this->container->has('cache_warmer')) {
+            $this->container->get('cache_warmer')->warmUp($this->container->getParameter('kernel.cache_dir'));
+        }
+    }
+
+    /**
+     * Builds the service container.
+     *
+     * @return \Symfony\Component\DependencyInjection\ContainerBuilder The compiled service container
+     *
+     * @throws \RuntimeException
+     */
+    protected function buildContainer()
+    {
+        foreach (array('cache' => $this->getCacheDir(), 'logs' => $this->getLogDir()) as $name => $dir) {
+            if (!is_dir($dir)) {
+                if (false === @mkdir($dir, 0777, true) && !is_dir($dir)) {
+                    throw new \RuntimeException(sprintf("Unable to create the %s directory (%s)\n", $name, $dir));
+                }
+            } elseif (!is_writable($dir)) {
+                throw new \RuntimeException(sprintf("Unable to write in the %s directory (%s)\n", $name, $dir));
+            }
+        }
+
+        $container = $this->getContainerBuilder();
+        $container->addObjectResource($this);
+        $this->prepareContainer($container);
+
+        if (null !== $cont = $this->registerContainerConfiguration($this->getContainerLoader($container))) {
+            $container->merge($cont);
+        }
+
+        // Only rebuild the classes if it doesn't exist or if the kernel is booted through the console meaning likely cache:clear is used
+        if (defined('IN_MAUTIC_CONSOLE') || !file_exists($this->getCacheDir().'/classes.php')) {
+            $container->addCompilerPass(new DependencyInjection\AddClassesToCachePass($this));
+        }
+
+        // Environmentally set parameters
+        $container->addResource(new EnvParametersResource('SYMFONY__'));
+        $container->addResource(new EnvParametersResource('MAUTIC__'));
+
+        return $container;
     }
 }

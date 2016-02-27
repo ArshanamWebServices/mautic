@@ -29,7 +29,6 @@ use Symfony\Component\Security\Http\SecurityEvents;
  */
 class CoreSubscriber extends CommonSubscriber
 {
-
     /**
      * {@inheritdoc}
      */
@@ -39,7 +38,6 @@ class CoreSubscriber extends CommonSubscriber
             KernelEvents::CONTROLLER          => array('onKernelController', 0),
             KernelEvents::REQUEST             => array('onKernelRequest', 0),
             CoreEvents::BUILD_MENU            => array('onBuildMenu', 9999),
-            CoreEvents::BUILD_ADMIN_MENU      => array('onBuildAdminMenu', 9999),
             CoreEvents::BUILD_ROUTE           => array('onBuildRoute', 0),
             CoreEvents::FETCH_ICONS           => array('onFetchIcons', 9999),
             SecurityEvents::INTERACTIVE_LOGIN => array('onSecurityInteractiveLogin', 0)
@@ -55,6 +53,12 @@ class CoreSubscriber extends CommonSubscriber
      */
     public function onKernelRequest(GetResponseEvent $event)
     {
+        // Set the user's default locale
+        $request = $event->getRequest();
+        if (!$request->hasPreviousSession()) {
+            return;
+        }
+
         $currentUser = $this->factory->getUser();
 
         //set the user's timezone
@@ -68,25 +72,23 @@ class CoreSubscriber extends CommonSubscriber
 
         date_default_timezone_set($tz);
 
-        //set the user's default locale
-        $request = $event->getRequest();
-        if (!$request->hasPreviousSession()) {
-            return;
-        }
-
-        // try to see if the locale has been set as a _locale routing parameter
-        if ($locale = $request->attributes->get('_locale')) {
-            $request->getSession()->set('_locale', $locale);
-        } else {
+        if (!$locale = $request->attributes->get('_locale')) {
             if (is_object($currentUser)) {
                 $locale = $currentUser->getLocale();
             }
             if (empty($locale)) {
                 $locale = $this->params['locale'];
             }
+        }
 
-            // if no explicit locale has been set on this request, use one from the session
-            $request->setLocale($request->getSession()->get('_locale', $locale));
+        $request->setLocale($locale);
+
+        // Set a cookie with session name for CKEditor's filemanager
+        $sessionName = $request->cookies->get('mautic_session_name');
+        if ($sessionName != session_name()) {
+            /** @var \Mautic\CoreBundle\Helper\CookieHelper $cookieHelper */
+            $cookieHelper = $this->factory->getHelper('cookie');
+            $cookieHelper->setCookie('mautic_session_name', session_name(), null);
         }
     }
 
@@ -105,8 +107,8 @@ class CoreSubscriber extends CommonSubscriber
 
         $session = $event->getRequest()->getSession();
         $securityContext = $this->factory->getSecurityContext();
-        if ($securityContext->isGranted('IS_AUTHENTICATED_FULLY') ||
-            $securityContext->isGranted('IS_AUTHENTICATED_REMEMBERED')) {
+        if ($securityContext->isGranted('IS_AUTHENTICATED_FULLY') || $securityContext->isGranted('IS_AUTHENTICATED_REMEMBERED')) {
+
             $user = $event->getAuthenticationToken()->getUser();
 
             //set a session var for filemanager to know someone is logged in
@@ -133,6 +135,7 @@ class CoreSubscriber extends CommonSubscriber
         }
 
         //set a couple variables used by Ckeditor's filemanager
+        $session->set('mautic.docroot', $event->getRequest()->server->get('DOCUMENT_ROOT'));
         $session->set('mautic.basepath', $event->getRequest()->getBasePath());
         $session->set('mautic.imagepath', $this->factory->getParameter('image_path'));
     }
@@ -176,7 +179,7 @@ class CoreSubscriber extends CommonSubscriber
 
                 /** @var \Mautic\UserBundle\Model\UserModel $userModel */
                 $userModel = $this->factory->getModel('user');
-                if ($user instanceof User && $user->getLastActive() < $delay) {
+                if ($user instanceof User && $user->getLastActive() < $delay && $user->getId()) {
                     $userModel->getRepository()->setLastActive($user);
                 }
 
@@ -204,17 +207,7 @@ class CoreSubscriber extends CommonSubscriber
      */
     public function onBuildMenu(MenuEvent $event)
     {
-        $this->buildMenu($event, 'main');
-    }
-
-    /**
-     * @param MenuEvent $event
-     *
-     * @return void
-     */
-    public function onBuildAdminMenu(MenuEvent $event)
-    {
-        $this->buildMenu($event, 'admin');
+        $this->buildMenu($event);
     }
 
     /**
@@ -224,7 +217,7 @@ class CoreSubscriber extends CommonSubscriber
      */
     public function onBuildRoute(RouteEvent $event)
     {
-        $this->buildRoute($event, 'routing');
+        $this->buildRoute($event);
     }
 
     /**

@@ -1,9 +1,10 @@
 <?php
 /**
- * Created by PhpStorm.
- * User: alan
- * Date: 1/8/15
- * Time: 11:51 AM
+ * @package     Mautic
+ * @copyright   2014 Mautic Contributors. All rights reserved.
+ * @author      Mautic
+ * @link        http://mautic.org
+ * @license     GNU/GPLv3 http://www.gnu.org/licenses/gpl-3.0.html
  */
 
 namespace Mautic\CoreBundle\Helper;
@@ -36,12 +37,12 @@ class ThemeHelper
      * @param $theme
      * @param $newName
      *
-     * @throws FileNotFoundException    When originFile doesn't exist
-     * @throws IOException              When copy fails
+     * @throws MauticException\FileExistsException
+     * @throws MauticException\FileNotFoundException
      */
     public function copy($theme, $newName)
     {
-        $root      = $this->factory->getSystemPath('root') . '/';
+        $root      = $this->factory->getSystemPath('themes_root') . '/';
         $themes    = $this->factory->getInstalledThemes();
 
         //check to make sure the theme exists
@@ -66,11 +67,12 @@ class ThemeHelper
      * @param $theme
      * @param $newName
      *
-     * @throws IOException              When move fails
+     * @throws FileN
+     * @throws MauticException\FileExistsException
      */
     public function rename ($theme, $newName)
     {
-        $root      = $this->factory->getSystemPath('root') . '/';
+        $root      = $this->factory->getSystemPath('themes_root') . '/';
         $themes    = $this->factory->getInstalledThemes();
 
         //check to make sure the theme exists
@@ -93,10 +95,12 @@ class ThemeHelper
 
     /**
      * @param $theme
+     *
+     * @throws MauticException\FileNotFoundException
      */
     public function delete($theme)
     {
-        $root      = $this->factory->getSystemPath('root') . '/';
+        $root      = $this->factory->getSystemPath('themes_root') . '/';
         $themes    = $this->factory->getInstalledThemes();
 
         //check to make sure the theme exists
@@ -109,7 +113,8 @@ class ThemeHelper
     }
 
     /**
-     * @param $theme
+     * @param $themePath
+     * @param $newName
      */
     private function updateConfig($themePath, $newName)
     {
@@ -144,7 +149,9 @@ class ThemeHelper
     }
 
     /**
-     * Renders parameters as a string.
+     * @param $config
+     *
+     * @param $config
      *
      * @return string
      */
@@ -182,34 +189,36 @@ class ThemeHelper
     }
 
     /**
-     * @param $array
+     * @param     $array
+     * @param int $level
+     *
+     * @return string
      */
-    protected function renderArray($array, $addClosingComma = false)
+    protected function renderArray($array, $level = 1)
     {
-        $string = "array(";
-        $first = true;
-        foreach ($array as $key => $value)
-        {
-            if (!$first) {
-                $string .= ',';
-            }
+        $string = "array(\n";
 
+        $count = $counter = count($array);
+        foreach ($array as $key => $value) {
             if (is_string($key)) {
+                if ($counter === $count) {
+                    $string .= str_repeat("\t", $level + 1);
+                }
                 $string .= '"'.$key.'" => ';
             }
 
             if (is_array($value)) {
-                $string .= $this->renderArray($value, true);
+                $string .= $this->renderArray($value, $level + 1);
             } else {
-                $string .= $value;
+                $string .= '"'.addslashes($value).'"';
             }
-            $first = false;
-        }
-        $string .= ")";
 
-        if ($addClosingComma) {
-            $string .= ',';
+            $counter--;
+            if ($counter > 0) {
+                $string .= ", \n" . str_repeat("\t", $level + 1);
+            }
         }
+        $string .= "\n" . str_repeat("\t", $level) . ")";
 
         return $string;
     }

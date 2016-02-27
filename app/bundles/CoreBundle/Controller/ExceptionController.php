@@ -10,6 +10,7 @@
 namespace Mautic\CoreBundle\Controller;
 
 use Symfony\Component\Debug\Exception\FlattenException;
+use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Log\DebugLoggerInterface;
@@ -37,6 +38,21 @@ class ExceptionController extends CommonController
                 $code = 500;
             }
 
+            // Special handling for oauth and api urls
+            if ((strpos($request->getUri(), '/oauth') !== false && strpos($request->getUri(), 'authorize') === false) || strpos($request->getUri(), '/api') !== false) {
+                $dataArray = array(
+                    'error' => array(
+                        'message' => $exception->getMessage(),
+                        'code'    => $code
+                    )
+                );
+                if ($env == 'dev') {
+                    $dataArray['trace'] = $exception->getTrace();
+                }
+
+                return new JsonResponse($dataArray, 200);
+            }
+
             if ($request->get('prod')) {
                 $layout = 'Error';
             }
@@ -57,30 +73,32 @@ class ExceptionController extends CommonController
 
             $statusText = isset(Response::$statusTexts[$code]) ? Response::$statusTexts[$code] : '';
 
-            $url = $request->getRequestUri();
+            $url      = $request->getRequestUri();
             $urlParts = parse_url($url);
 
-            return $this->delegateView(array(
-                'viewParameters'  => array(
-                    'baseTemplate'   => $baseTemplate,
-                    'status_code'    => $code,
-                    'status_text'    => $statusText,
-                    'exception'      => $exception,
-                    'logger'         => $logger,
-                    'currentContent' => $currentContent,
-                    'isPublicPage'   => $anonymous
-                ),
-                'contentTemplate' => $template,
-                'passthroughVars' => array(
-                    'error' => array(
-                        'code'      => $code,
-                        'text'      => $statusText,
-                        'exception' => ($env == 'dev') ? $statusText : '',
-                        'trace'     => ($env == 'dev') ? $exception->getTrace() : ''
+            return $this->delegateView(
+                array(
+                    'viewParameters'  => array(
+                        'baseTemplate'   => $baseTemplate,
+                        'status_code'    => $code,
+                        'status_text'    => $statusText,
+                        'exception'      => $exception,
+                        'logger'         => $logger,
+                        'currentContent' => $currentContent,
+                        'isPublicPage'   => $anonymous
                     ),
-                    'route' => $urlParts['path']
+                    'contentTemplate' => $template,
+                    'passthroughVars' => array(
+                        'error' => array(
+                            'code'      => $code,
+                            'text'      => $statusText,
+                            'exception' => ($env == 'dev') ? $exception->getMessage() : '',
+                            'trace'     => ($env == 'dev') ? $exception->getTrace() : ''
+                        ),
+                        'route' => $urlParts['path']
+                    )
                 )
-            ));
+            );
         }
     }
 

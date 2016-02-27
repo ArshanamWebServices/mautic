@@ -11,7 +11,7 @@
 
 $view->extend('MauticCoreBundle:Default:content.html.php');
 $view['slots']->set('mauticContent', 'user');
-$view['slots']->set("headerTitle", $view['translator']->trans('mautic.user.account.header.index'));
+$view['slots']->set("headerTitle", $view['translator']->trans('mautic.user.account.settings'));
 ?>
 <!-- start: box layout -->
 <div class="box-layout">
@@ -71,7 +71,6 @@ $view['slots']->set("headerTitle", $view['translator']->trans('mautic.user.accou
                         <?php
                         echo $view['form']->row($userForm['timezone']);
                         echo $view['form']->row($userForm['locale']);
-                        echo $view['form']->row($userForm['currentPassword']);
                         echo $view['form']->row($userForm['plainPassword']['password']);
                         echo $view['form']->row($userForm['plainPassword']['confirm']);
                         ?>

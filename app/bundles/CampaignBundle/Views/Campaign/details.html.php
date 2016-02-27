@@ -31,7 +31,7 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
             <div class="pr-md pl-md pt-lg pb-lg">
                 <div class="box-layout">
                     <div class="col-xs-6 va-m">
-                        <p class="text-white dark-sm mb-0"><?php echo $campaign->getDescription(); ?></p>
+                        <div class="text-white dark-sm mb-0"><?php echo $campaign->getDescription(); ?></div>
                     </div>
                     <div class="col-xs-6 va-m text-right">
                         <?php echo $view->render('MauticCoreBundle:Helper:publishstatus_badge.html.php', array('entity' => $campaign)); ?>
@@ -143,9 +143,14 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
                         <?php echo $view['translator']->trans('mautic.campaign.event.actions.header'); ?>
                     </a>
                 </li>
+                <li>
+                    <a href="#conditions-container" role="tab" data-toggle="tab">
+                        <?php echo $view['translator']->trans('mautic.campaign.event.conditions.header'); ?>
+                    </a>
+                </li>
                 <li class="">
                     <a href="#leads-container" role="tab" data-toggle="tab">
-                        <?php echo $view['translator']->trans('mautic.campaign.event.leads.header'); ?>
+                        <?php echo $view['translator']->trans('mautic.lead.leads'); ?>
                     </a>
                 </li>
             </ul>
@@ -160,6 +165,9 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
             </div>
             <div class="tab-pane fade in bdr-w-0" id="actions-container">
                 <?php echo $view->render('MauticCampaignBundle:Campaign:events.html.php', array('events' => $events, 'eventType' => 'action')); ?>
+            </div>
+            <div class="tab-pane fade in bdr-w-0" id="conditions-container">
+                <?php echo $view->render('MauticCampaignBundle:Campaign:events.html.php', array('events' => $events, 'eventType' => 'condition')); ?>
             </div>
             <!--/ #events-container -->
 

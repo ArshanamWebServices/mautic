@@ -13,7 +13,7 @@ $view->extend('MauticCoreBundle:Default:content.html.php');
 $view['slots']->set('mauticContent', 'page');
 $view['slots']->set("headerTitle", $activePage->getTitle());
 
-$showVariants     = (count($variants['children']) || (!empty($variants['parent']) && isset($variant['parent']) && $variant['parent']->getId() != $activePage->getId()));
+$showVariants     = (count($variants['children']) || (!empty($variants['parent']) && $variants['parent']->getId() != $activePage->getId()));
 $showTranslations = (count($translations['children']) || (!empty($translations['parent']) && $translations['parent']->getId() != $activePage->getId()));
 
 $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actions.html.php', array(
@@ -37,7 +37,7 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
             <div class="pr-md pl-md pt-lg pb-lg">
                 <div class="box-layout">
                     <div class="col-xs-10">
-                        <p class="text-muted"><?php echo $activePage->getMetaDescription(); ?></p>
+                        <div class="text-muted"><?php echo $activePage->getMetaDescription(); ?></div>
                     </div>
                     <div class="col-xs-2 text-right">
                         <?php echo $view->render('MauticCoreBundle:Helper:publishstatus_badge.html.php', array('entity' => $activePage)); ?>
@@ -174,9 +174,9 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
             <!--/ tabs controls -->
         </div>
 
+        <?php if ($showVariants || $showTranslations): ?>
         <!-- start: tab-content -->
         <div class="tab-content pa-md">
-
             <?php if ($showVariants): ?>
             <!-- #variants-container -->
             <div class="tab-pane active bdr-w-0" id="variants-container">
@@ -210,9 +210,9 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
                                         <h3>
                                             <?php echo $view->render('MauticCoreBundle:Helper:publishstatus_icon.html.php', array(
                                                 'item'  => $variants['parent'],
-                                                'model' => 'page.page',
+                                                'model' => 'page',
                                                 'size'  => '',
-                                                'disableToggle' => true
+                                                'query' => 'size='
                                             )); ?>
                                         </h3>
                                     </div>
@@ -227,9 +227,9 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
                                         <h5 class="fw-sb text-primary">
                                             <a href="<?php echo $view['router']->generate('mautic_page_action', array('objectAction' => 'view', 'objectId' => $variants['parent']->getId())); ?>" data-toggle="ajax"><?php echo $variants['parent']->getTitle(); ?>
                                                 <?php if ($variants['parent']->getId() == $activePage->getId()) : ?>
-                                                    <span>[<?php echo $view['translator']->trans('mautic.page.current'); ?>]</span>
+                                                    <span>[<?php echo $view['translator']->trans('mautic.core.current'); ?>]</span>
                                                 <?php endif; ?>
-                                                <span>[<?php echo $view['translator']->trans('mautic.page.parent'); ?>]</span>
+                                                <span>[<?php echo $view['translator']->trans('mautic.core.parent'); ?>]</span>
                                             </a>
                                         </h5>
                                         <span class="text-white dark-sm"><?php echo $variants['parent']->getAlias(); ?></span>
@@ -276,14 +276,20 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
                                                 'item'  => $variant,
                                                 'model' => 'page',
                                                 'size'  => '',
-                                                'disableToggle' => true
+                                                'query' => 'size='
                                             )); ?>
                                         </h3>
                                     </div>
                                     <div class="col-xs-11">
                                         <?php if ($isWinner): ?>
                                         <div class="mr-xs pull-left" data-toggle="tooltip" title="<?php echo $view['translator']->trans('mautic.page.abtest.makewinner'); ?>">
-                                            <a class="btn btn-warning" href="javascript:void(0);" onclick="Mautic.showConfirmation('<?php echo $view->escape($view["translator"]->trans("mautic.page.abtest.confirmmakewinner", array("%name%" => $variant->getTitle() . " (" . $variant->getId() . ")")), 'js'); ?>', '<?php echo $view->escape($view["translator"]->trans("mautic.page.abtest.makewinner"), 'js'); ?>', 'executeAction', ['<?php echo $view['router']->generate('mautic_page_action', array('objectAction' => 'winner', 'objectId' => $variant->getId())); ?>', ''],'<?php echo $view->escape($view["translator"]->trans("mautic.core.form.cancel"), 'js'); ?>','',[]);">
+                                            <a class="btn btn-warning"
+                                               data-toggle="confirmation"
+                                               href="<?php echo $view['router']->generate('mautic_page_action', array('objectAction' => 'winner', 'objectId' => $variant->getId())); ?>"
+                                               data-message="<?php echo $view->escape($view["translator"]->trans("mautic.page.abtest.confirmmakewinner", array("%name%" => $variant->getTitle()))); ?>"
+                                               data-confirm-text="<?php echo $view->escape($view["translator"]->trans("mautic.page.abtest.makewinner")); ?>"
+                                               data-confirm-callback="executeAction"
+                                               data-cancel-text="<?php echo $view->escape($view["translator"]->trans("mautic.core.form.cancel")); ?>">
                                                 <i class="fa fa-trophy"></i>
                                             </a>
                                         </div>
@@ -291,7 +297,7 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
                                         <h5 class="fw-sb text-primary">
                                             <a href="<?php echo $view['router']->generate('mautic_page_action', array('objectAction' => 'view', 'objectId' => $variant->getId())); ?>" data-toggle="ajax"><?php echo $variant->getTitle(); ?>
                                                 <?php if ($variant->getId() == $activePage->getId()) : ?>
-                                                    <span>[<?php echo $view['translator']->trans('mautic.page.current'); ?>]</span>
+                                                    <span>[<?php echo $view['translator']->trans('mautic.core.current'); ?>]</span>
                                                 <?php endif; ?>
                                             </a>
                                         </h5>
@@ -342,9 +348,9 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
                                         <h5 class="fw-sb text-primary">
                                             <a href="<?php echo $view['router']->generate('mautic_page_action', array('objectAction' => 'view', 'objectId' => $translations['parent']->getId())); ?>" data-toggle="ajax"><?php echo $translations['parent']->getTitle(); ?>
                                                 <?php if ($translations['parent']->getId() == $activePage->getId()) : ?>
-                                                    <span>[<?php echo $view['translator']->trans('mautic.page.current'); ?>]</span>
+                                                    <span>[<?php echo $view['translator']->trans('mautic.core.current'); ?>]</span>
                                                 <?php endif; ?>
-                                                <span>[<?php echo $view['translator']->trans('mautic.page.parent'); ?>]</span>
+                                                <span>[<?php echo $view['translator']->trans('mautic.core.parent'); ?>]</span>
                                             </a>
                                         </h5>
                                         <span class="text-white dark-sm"><?php echo $translations['parent']->getAlias(); ?></span>
@@ -364,8 +370,9 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
                                             <h3>
                                                 <?php echo $view->render('MauticCoreBundle:Helper:publishstatus_icon.html.php', array(
                                                     'item'  => $translation,
-                                                    'model' => 'page.page',
-                                                    'size'  => ''
+                                                    'model' => 'page',
+                                                    'size'  => '',
+                                                    'query' => 'size='
                                                 )); ?>
                                             </h3>
                                         </div>
@@ -373,7 +380,7 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
                                             <h5 class="fw-sb text-primary">
                                                 <a href="<?php echo $view['router']->generate('mautic_page_action', array('objectAction' => 'view', 'objectId' => $translation->getId())); ?>" data-toggle="ajax"><?php echo $translation->getTitle(); ?>
                                                     <?php if ($translation->getId() == $activePage->getId()) : ?>
-                                                        <span>[<?php echo $view['translator']->trans('mautic.page.current'); ?>]</span>
+                                                        <span>[<?php echo $view['translator']->trans('mautic.core.current'); ?>]</span>
                                                     <?php endif; ?>
                                                 </a>
                                             </h5>
@@ -394,6 +401,17 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
             <!--/ #translation-container -->
         </div>
         <!--/ end: tab-content -->
+        <?php elseif ((empty($variants['parent']) || ($variants['parent']->getId() == $activePage->getId())) && $permissions['page:pages:create']): ?>
+            <div class="pa-md">
+                <div class="text-center" style="height: 100%; width: 100%; background-color: #4e5d9d; opacity: 0.8;">
+                    <h3 style="padding: 30px;">
+                        <a class="create-abtest-link" href="<?php echo $view['router']->generate('mautic_page_action', array('objectAction' => 'abtest', 'objectId' => $activePage->getId())); ?>" data-toggle="ajax">
+                            <?php echo $view['translator']->trans('mautic.page.abtest.create'); ?> <i class="fa fa-angle-right"></i>
+                        </a>
+                    </h3>
+                </div>
+            </div>
+        <?php endif; ?>
     </div>
     <!--/ left section -->
 
@@ -402,19 +420,34 @@ $view['slots']->set('actions', $view->render('MauticCoreBundle:Helper:page_actio
         <!-- preview URL -->
         <div class="panel bg-transparent shd-none bdr-rds-0 bdr-w-0 mt-sm mb-0">
             <div class="panel-heading">
-                <?php $trans = (!empty($variants['parent'])) ? 'mautic.page.urlvariant' : 'mautic.page.url'; ?>
-                <div class="panel-title"><?php echo $view['translator']->trans($trans); ?></div>
+                <div class="panel-title"><?php echo $view['translator']->trans('mautic.page.url'); ?></div>
             </div>
             <div class="panel-body pt-xs">
                 <div class="input-group">
-                <input onclick="this.setSelectionRange(0, this.value.length);" type="text" class="form-control" readonly
-                value="<?php echo $pageUrl; ?>" />
+                    <input onclick="this.setSelectionRange(0, this.value.length);" type="text" class="form-control" readonly
+                    value="<?php echo $pageUrl; ?>" />
+                    <span class="input-group-btn">
+                        <button class="btn btn-default btn-nospin" onclick="window.open('<?php echo $pageUrl; ?>', '_blank');">
+                            <i class="fa fa-external-link"></i>
+                        </button>
+                    </span>
+                </div>
+            </div>
+        </div>
+        <div class="panel bg-transparent shd-none bdr-rds-0 bdr-w-0 mt-sm mb-0">
+            <div class="panel-heading">
+                <div class="panel-title"><?php echo $view['translator']->trans('mautic.page.preview.url'); ?></div>
+            </div>
+            <div class="panel-body pt-xs">
+                <div class="input-group">
+                    <input onclick="this.setSelectionRange(0, this.value.length);" type="text" class="form-control" readonly
+                           value="<?php echo $previewUrl; ?>" />
                 <span class="input-group-btn">
-                    <button class="btn btn-default btn-nospin" onclick="window.open('<?php echo $pageUrl; ?>', '_blank');">
+                    <button class="btn btn-default btn-nospin" onclick="window.open('<?php echo $previewUrl; ?>', '_blank');">
                         <i class="fa fa-external-link"></i>
                     </button>
                 </span>
-            </div>
+                </div>
             </div>
         </div>
         <!--/ preview URL -->

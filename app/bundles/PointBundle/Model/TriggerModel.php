@@ -16,6 +16,7 @@ use Mautic\PointBundle\Entity\Trigger;
 use Mautic\PointBundle\Entity\TriggerEvent;
 use Mautic\PointBundle\Event as Events;
 use Mautic\PointBundle\PointEvents;
+use Symfony\Component\EventDispatcher\Event;
 use Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException;
 
 /**
@@ -120,7 +121,7 @@ class TriggerModel extends CommonFormModel
                 ));
 
                 foreach ($leads as $l) {
-                    if ($this->triggerEvent($event, $l, true)) {
+                    if ($this->triggerEvent($event->convertToArray(), $l, true)) {
                         $log = new LeadTriggerLog();
                         $log->setIpAddress($ipAddress);
                         $log->setEvent($event);
@@ -157,7 +158,7 @@ class TriggerModel extends CommonFormModel
      *
      * @throws MethodNotAllowedHttpException
      */
-    protected function dispatchEvent($action, &$entity, $isNew = false, $event = false)
+    protected function dispatchEvent($action, &$entity, $isNew = false, Event $event = null)
     {
         if (!$entity instanceof Trigger) {
             throw new MethodNotAllowedHttpException(array('Trigger'));
@@ -177,7 +178,7 @@ class TriggerModel extends CommonFormModel
                 $name = PointEvents::TRIGGER_POST_DELETE;
                 break;
             default:
-                return false;
+                return null;
         }
 
         if ($this->dispatcher->hasListeners($name)) {
@@ -189,7 +190,7 @@ class TriggerModel extends CommonFormModel
             return $event;
         }
 
-        return false;
+        return null;
     }
 
     /**
@@ -198,7 +199,7 @@ class TriggerModel extends CommonFormModel
      *
      * @return void
      */
-    public function setEvents(Trigger &$entity, $sessionEvents)
+    public function setEvents(Trigger $entity, $sessionEvents)
     {
         $order   = 1;
         $existingActions = $entity->getEvents();
@@ -215,11 +216,18 @@ class TriggerModel extends CommonFormModel
                 if (method_exists($event, $func)) {
                     $event->$func($v);
                 }
-                $event->setTrigger($entity);
             }
+            $event->setTrigger($entity);
             $event->setOrder($order);
             $order++;
             $entity->addTriggerEvent($properties['id'], $event);
+        }
+
+        // Persist if editing the trigger
+        if ($entity->getId()) {
+            /** @var \Mautic\PointBundle\Model\TriggerEventModel $eventModel */
+            $eventModel = $this->factory->getModel('point.triggerEvent');
+            $eventModel->saveEntities($entity->getEvents());
         }
     }
 
@@ -257,17 +265,16 @@ class TriggerModel extends CommonFormModel
         return $groups;
     }
 
-
     /**
      * Triggers a specific event
      *
-     * @param TriggerEvent $event
-     * @param Lead         $lead
-     * @param bool         $force
+     * @param array   $event
+     * @param Lead    $lead
+     * @param bool    $force
      *
      * @return bool Was event triggered
      */
-    public function triggerEvent(TriggerEvent $event, Lead $lead = null,  $force = false)
+    public function triggerEvent($event, Lead $lead = null,  $force = false)
     {
         //only trigger events for anonymous users
         if (!$force && !$this->security->isAnonymous()) {
@@ -284,13 +291,13 @@ class TriggerModel extends CommonFormModel
             $appliedEvents = $this->getEventRepository()->getLeadTriggeredEvents($lead->getId());
 
             //if it's already been done, then skip it
-            if (isset($appliedEvents[$event->getId()])) {
+            if (isset($appliedEvents[$event['id']])) {
                 return false;
             }
         }
 
         $availableEvents = $this->getEvents();
-        $eventType = $event->getType();
+        $eventType       = $event['type'];
 
         //make sure the event still exists
         if (!isset($availableEvents[$eventType])) {
@@ -301,7 +308,8 @@ class TriggerModel extends CommonFormModel
         $args     = array(
             'event'    => $event,
             'lead'     => $lead,
-            'factory'  => $this->factory
+            'factory'  => $this->factory,
+            'config'   => $event['properties']
         );
 
         if (is_callable($settings['callback'])) {
@@ -311,7 +319,7 @@ class TriggerModel extends CommonFormModel
                 $parts      = explode('::', $settings['callback']);
                 $reflection = new \ReflectionMethod($parts[0], $parts[1]);
             } else {
-                new \ReflectionMethod(null, $settings['callback']);
+                $reflection = new \ReflectionMethod(null, $settings['callback']);
             }
 
             $pass = array();
@@ -322,9 +330,8 @@ class TriggerModel extends CommonFormModel
                     $pass[] = null;
                 }
             }
-            $reflection->invokeArgs($this, $pass);
 
-            return true;
+            return $reflection->invokeArgs($this, $pass);
         }
 
         return false;
@@ -347,14 +354,29 @@ class TriggerModel extends CommonFormModel
         if (!empty($events)) {
             //get a list of actions that has already been applied to this lead
             $appliedEvents = $repo->getLeadTriggeredEvents($lead->getId());
-
+            $ipAddress     = $this->factory->getIpAddress();
+            $persist       = array();
             foreach ($events as $event) {
-                if (isset($appliedEvents[$event->getId()])) {
+                if (isset($appliedEvents[$event['id']])) {
                     //don't apply the event to the lead if it's already been done
                     continue;
                 }
 
-                $this->triggerEvent($event, $lead);
+                if ($this->triggerEvent($event, $lead, true)) {
+                    $log = new LeadTriggerLog();
+                    $log->setIpAddress($ipAddress);
+                    $log->setEvent($this->em->getReference('MauticPointBundle:TriggerEvent', $event['id']));
+                    $log->setLead($lead);
+                    $log->setDateFired(new \DateTime());
+                    $persist[] = $log;
+                }
+            }
+
+            if (!empty($persist)) {
+                $this->getEventRepository()->saveEntities($persist);
+
+                $this->em->clear('Mautic\PointBundle\Entity\LeadTriggerLog');
+                $this->em->clear('Mautic\PointBundle\Entity\TriggerEvent');
             }
         }
     }

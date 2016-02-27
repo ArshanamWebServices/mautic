@@ -9,8 +9,8 @@
 
 namespace Mautic\InstallBundle\Configurator\Step;
 
+use Mautic\CoreBundle\Configurator\Configurator;
 use Mautic\InstallBundle\Configurator\Form\DoctrineStepType;
-use Symfony\Component\Validator\Constraints as Assert;
 
 /**
  * Doctrine Step.
@@ -22,14 +22,11 @@ class DoctrineStep implements StepInterface
     /**
      * Database driver
      *
-     * @Assert\Choice(callback="getDriverKeys")
      */
-    public $driver = 'mysqli';
+    public $driver = 'pdo_mysql';
 
     /**
      * Database host
-     *
-     * @Assert\NotBlank(message = "mautic.install.notblank")
      */
     public $host = 'localhost';
 
@@ -42,21 +39,17 @@ class DoctrineStep implements StepInterface
 
     /**
      * Database connection port
-     *
-     * @Assert\Range(min = "0")
      */
     public $port = 3306;
 
     /**
      * Database name
      *
-     * @Assert\NotBlank(message = "mautic.install.notblank")
      */
     public $name;
 
     /**
      * Database user
-     * @Assert\NotBlank(message = "mautic.install.notblank")
      */
     public $user;
 
@@ -91,15 +84,17 @@ class DoctrineStep implements StepInterface
     /**
      * Constructor
      *
-     * @param array $parameters
+     * @param Configurator $configurator
      */
-    public function __construct(array $parameters)
+    public function __construct(Configurator $configurator)
     {
+        $parameters = $configurator->getParameters();
+
         foreach ($parameters as $key => $value) {
             if (0 === strpos($key, 'db_')) {
                 $parameters[substr($key, 3)] = $value;
-                $key = substr($key, 3);
-                $this->$key = $value;
+                $key                         = substr($key, 3);
+                $this->$key                  = $value;
             }
         }
     }
@@ -149,7 +144,7 @@ class DoctrineStep implements StepInterface
         foreach ($data as $key => $value) {
             // Exclude backup params from the config
             if (substr($key, 0, 6) != 'backup') {
-                $parameters['db_' . $key] = $value;
+                $parameters['db_'.$key] = $value;
             }
         }
 
@@ -181,32 +176,36 @@ class DoctrineStep implements StepInterface
      */
     public static function getDrivers()
     {
-        $supported = array(
-            'pdo_mysql'  => 'MySQL (PDO)',
-            'pdo_sqlite' => 'SQLite (PDO)',
-            'pdo_pgsql'  => 'PosgreSQL (PDO)',
-            'pdo_oci'    => 'Oracle (PDO)',
-            'pdo_ibm'    => 'IBM DB2 (PDO)',
-            'pdo_sqlsrv' => 'SQLServer (PDO)',
-            'oci8'       => 'Oracle (native)',
-            'ibm_db2'    => 'IBM DB2 (native)',
-            'mysqli'     => 'MySQLi',
+        $mauticSupported = array(
+            'pdo_mysql' => 'MySQL PDO (Recommended)',
+            'mysqli'    => 'MySQLi',
+            'pdo_pgsql' => 'PostgreSQL',
+            //'pdo_sqlite' => 'SQLite',
+            //'pdo_sqlsrv' => 'SQL Server',
+            //'pdo_oci'    => 'Oracle (PDO)',
+            //'pdo_ibm'    => 'IBM DB2 (PDO)',
+            //'oci8'       => 'Oracle (native)',
+            //'ibm_db2'    => 'IBM DB2 (native)',
         );
 
-        $available = array();
+        $supported = array();
 
-        // Add PDO drivers if they're supported
-        foreach (\PDO::getAvailableDrivers() as $driver) {
-            if (array_key_exists('pdo_' . $driver, $supported)) {
-                $available['pdo_' . $driver] = $supported['pdo_' . $driver];
+        // Add PDO drivers if supported
+        if (class_exists('\PDO')) {
+            $pdoDrivers = \PDO::getAvailableDrivers();
+
+            foreach ($pdoDrivers as $driver) {
+                if (array_key_exists('pdo_'.$driver, $mauticSupported)) {
+                    $supported['pdo_'.$driver] = $mauticSupported['pdo_'.$driver];
+                }
             }
         }
 
         // Add MySQLi if available
         if (function_exists('mysqli_connect')) {
-            $available['mysqli'] = 'MySQLi';
+            $supported['mysqli'] = $mauticSupported['mysqli'];
         }
 
-        return $available;
+        return $supported;
     }
 }

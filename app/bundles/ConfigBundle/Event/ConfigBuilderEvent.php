@@ -9,19 +9,16 @@
 
 namespace Mautic\ConfigBundle\Event;
 
-use Mautic\CoreBundle\Event\CommonEvent;
+use Mautic\CoreBundle\Factory\MauticFactory;
+use Symfony\Component\EventDispatcher\Event;
 
 /**
  * Class ConfigEvent
  *
  * @package Mautic\ConfigBundle\Event
  */
-class ConfigBuilderEvent extends CommonEvent
+class ConfigBuilderEvent extends Event
 {
-    /**
-     * @var Container
-     */
-    private $container;
 
     /**
      * @var array
@@ -34,13 +31,16 @@ class ConfigBuilderEvent extends CommonEvent
     private $formThemes = array();
 
     /**
-     * Consctructor
-     *
-     * @param appProdProjectContainer|appDevDebugProjectContainer
+     * @var MauticFactory
      */
-    public function __construct($container)
+    private $factory;
+
+    /**
+     * @param MauticFactory $factory
+     */
+    public function __construct (MauticFactory $factory)
     {
-        $this->container = $container;
+        $this->factory = $factory;
     }
 
     /**
@@ -50,7 +50,7 @@ class ConfigBuilderEvent extends CommonEvent
      *
      * @return void
      */
-    public function addForm($form)
+    public function addForm ($form)
     {
         if (isset($form['formTheme'])) {
             $this->formThemes[] = $form['formTheme'];
@@ -64,7 +64,7 @@ class ConfigBuilderEvent extends CommonEvent
      *
      * @return array
      */
-    public function getForms()
+    public function getForms ()
     {
         return $this->forms;
     }
@@ -74,30 +74,31 @@ class ConfigBuilderEvent extends CommonEvent
      *
      * @return array
      */
-    public function getFormThemes()
+    public function getFormThemes ()
     {
         return $this->formThemes;
     }
 
     /**
-     * Returns the container
+     * Returns the factory
      *
-     * @return Container
+     * @return MauticFactory
      */
-    public function getContainer()
+    public function getFactory ()
     {
-        return $this->container;
+        return $this->factory;
     }
 
     /**
      * Helper method can load $parameters array from a config file.
      *
      * @param string $path (relative from the root dir)
+     *
      * @return array
      */
-    public function getParameters($path)
+    public function getParameters ($path = null)
     {
-        $paramsFile = $this->getContainer()->getParameter('kernel.root_dir') . $path;
+        $paramsFile = $this->factory->getSystemPath('app') . $path;
 
         if (file_exists($paramsFile)) {
             // Import the bundle configuration, $parameters is defined in this file
@@ -109,5 +110,25 @@ class ConfigBuilderEvent extends CommonEvent
         }
 
         return $parameters;
+    }
+
+    /**
+     * @param $bundle
+     *
+     * @return array
+     */
+    public function getParametersFromConfig ($bundle)
+    {
+        static $allBundles;
+
+        if (empty($allBundles)) {
+            $allBundles = $this->factory->getMauticBundles(true);
+        }
+
+        if (isset($allBundles[$bundle]) && $allBundles[$bundle]['config']['parameters']) {
+            return $allBundles[$bundle]['config']['parameters'];
+        } else {
+            return array();
+        }
     }
 }

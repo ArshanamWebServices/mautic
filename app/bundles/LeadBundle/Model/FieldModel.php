@@ -15,6 +15,7 @@ use Mautic\LeadBundle\Entity\LeadField;
 use Mautic\LeadBundle\Event\LeadFieldEvent;
 use Mautic\LeadBundle\Helper\FormFieldHelper;
 use Mautic\LeadBundle\LeadEvents;
+use Symfony\Component\EventDispatcher\Event;
 use Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException;
 
 /**
@@ -26,9 +27,7 @@ class FieldModel extends FormModel
 {
 
     /**
-     * {@inheritdoc}
-     *
-     * @return string
+     * @return \Doctrine\ORM\EntityRepository
      */
     public function getRepository()
     {
@@ -94,12 +93,13 @@ class FieldModel extends FormModel
 
         if ($isNew) {
             if (empty($alias)) {
-                $alias = strtolower(InputHelper::alphanum($entity->getName()));
-            } else {
-                $alias = strtolower(InputHelper::alphanum($alias));
+                $alias = $entity->getName();
             }
 
-            //make sure alias is not already taken
+            // clean the alias
+            $alias = $this->cleanAlias($alias, 'f_', 25);
+
+            // make sure alias is not already taken
             $repo      = $this->getRepository();
             $testAlias = $alias;
             $aliases   = $repo->getAliases($entity->getId());
@@ -118,27 +118,64 @@ class FieldModel extends FormModel
             $entity->setAlias($alias);
         }
 
-        if ($entity->getType() == 'time') {
+        $type = $entity->getType();
+        if ($type == 'time') {
             //time does not work well with list filters
             $entity->setIsListable(false);
+        } elseif ($type == 'select' || $type == 'lookup') {
+            // Convert to a string
+            $properties = $entity->getProperties();
+            if (isset($properties['list']) && is_array($properties['list'])) {
+                $properties['list'] = implode('|', array_map('trim', $properties['list']));
+            }
+            $entity->setProperties($properties);
         }
 
         $event = $this->dispatchEvent("pre_save", $entity, $isNew);
         $this->getRepository()->saveEntity($entity);
         $this->dispatchEvent("post_save", $entity, $isNew, $event);
 
+        $isUnique = $entity->getIsUniqueIdentifier();
+
         if ($entity->getId()) {
             //create the field as its own column in the leads table
             $leadsSchema = $this->factory->getSchemaHelper('column', 'leads');
             if ($isNew || (!$isNew && !$leadsSchema->checkColumnExists($alias))) {
-                $leadsSchema->addColumn(array(
-                    'name' => $alias,
-                    'type' => 'text',
-                    'options' => array(
-                        'notnull' => false
+                $leadsSchema->addColumn(
+                    array(
+                        'name'    => $alias,
+                        'type'    => (in_array($alias, array('country', 'email') ) || $isUnique) ? 'string' : 'text',
+                        'options' => array(
+                            'notnull' => false
+                        )
                     )
-                ));
+                );
                 $leadsSchema->executeChanges();
+
+                if ($isUnique) {
+                    // Get list of current uniques
+                    $uniqueIdentifierFields = $this->getUniqueIdentifierFields();
+
+                    // Always use email
+                    $indexColumns   = array('email');
+                    $indexColumns   = array_merge($indexColumns, array_keys($uniqueIdentifierFields));
+                    $indexColumns[] = $alias;
+
+                    // Only use three to prevent max key length errors
+                    $indexColumns = array_slice($indexColumns, 0, 3);
+
+                    try {
+                        // Update the unique_identifier_search index
+                        /** @var \Mautic\CoreBundle\Doctrine\Helper\IndexSchemaHelper $modifySchema */
+                        $modifySchema = $this->factory->getSchemaHelper('index', 'leads');
+                        $modifySchema->allowColumn($alias);
+                        $modifySchema->addIndex($indexColumns, 'unique_identifier_search');
+                        $modifySchema->addIndex(array($alias), 'lead_field'.$alias.'_search');
+                        $modifySchema->executeChanges();
+                    } catch (\Exception $e) {
+                        error_log($e);
+                    }
+                }
             }
         }
 
@@ -161,6 +198,24 @@ class FieldModel extends FormModel
         $leadsSchema->executeChanges();
     }
 
+    /**
+     * Delete an array of entities
+     *
+     * @param array $ids
+     *
+     * @return array
+     */
+    public function deleteEntities($ids)
+    {
+        $entities = parent::deleteEntities($ids);
+
+        //remove the column from the leads table
+        $leadsSchema = $this->factory->getSchemaHelper('column', 'leads');
+        foreach ($entities as $e) {
+            $leadsSchema->dropColumn($e->getAlias());
+        }
+        $leadsSchema->executeChanges();
+    }
 
     /**
      * Reorder fields based on passed entity position
@@ -202,13 +257,14 @@ class FieldModel extends FormModel
      * Reorders fields by a list of field ids
      *
      * @param array $list
+     * @param int   $start Number to start the order by (used for paginated reordering)
      */
-    public function reorderFieldsByList(array $list)
+    public function reorderFieldsByList(array $list, $start = 1)
     {
         $fields = $this->getRepository()->findBy(array(), array('order' => 'ASC'));
         foreach ($fields as $field) {
             if (in_array($field->getId(), $list)) {
-                $order = ((int) array_search($field->getId(), $list) + 1);
+                $order = ((int) array_search($field->getId(), $list) + $start);
                 $field->setOrder($order);
                 $this->em->persist($field);
             }
@@ -285,7 +341,7 @@ class FieldModel extends FormModel
      * @param $isNew
      * @throws \Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException
      */
-    protected function dispatchEvent($action, &$entity, $isNew = false, $event = false)
+    protected function dispatchEvent($action, &$entity, $isNew = false, Event $event = null)
     {
         if (!$entity instanceof LeadField) {
             throw new MethodNotAllowedHttpException(array('LeadField'));
@@ -305,7 +361,7 @@ class FieldModel extends FormModel
                 $name = LeadEvents::FIELD_POST_DELETE;
                 break;
             default:
-                return false;
+                return null;
         }
 
         if ($this->dispatcher->hasListeners($name)) {
@@ -318,7 +374,125 @@ class FieldModel extends FormModel
 
             return $event;
         } else {
-            return false;
+            return null;
         }
+    }
+
+    /**
+     * @param bool|true $byGroup
+     * @param bool|true $alphabetical
+     * @param array     $filters
+     *
+     * @return array
+     */
+    public function getFieldList($byGroup = true, $alphabetical = true, $filters = array('isPublished' => true))
+    {
+        $forceFilters = array();
+        foreach ($filters as $col => $val) {
+            $forceFilters[] = array(
+                'column' => "f.{$col}",
+                'expr'   => 'eq',
+                'value'  => $val
+            );
+        }
+        // Get a list of custom form fields
+        $fields = $this->getEntities(array(
+            'filter'     => array(
+                'force' => $forceFilters
+            ),
+            'orderBy'    => 'f.order',
+            'orderByDir' => 'asc'
+        ));
+
+        $leadFields = array();
+
+        foreach ($fields as $f) {
+            if ($byGroup) {
+                $fieldName = $this->translator->trans('mautic.lead.field.group.' . $f->getGroup());
+                $leadFields[$fieldName][$f->getAlias()] = $f->getLabel();
+            } else {
+                $leadFields[$f->getAlias()] = $f->getLabel();
+            }
+        }
+
+        if ($alphabetical) {
+            // Sort the groups
+            uksort($leadFields, 'strnatcmp');
+
+            if ($byGroup) {
+                // Sort each group by translation
+                foreach ($leadFields as $group => &$fieldGroup) {
+                    uasort($fieldGroup, 'strnatcmp');
+                }
+            }
+        }
+
+        return $leadFields;
+    }
+
+    /**
+     * Get the fields for a specific group
+     *
+     * @param       $group
+     * @param array $filters
+     *
+     * @return array
+     */
+    public function getGroupFields($group, $filters = array('isPublished' => true))
+    {
+        $forceFilters = array(
+            array(
+                'column' => 'f.group',
+                'expr'   => 'eq',
+                'value'  => $group
+            )
+        );
+        foreach ($filters as $col => $val) {
+            $forceFilters[] = array(
+                'column' => "f.{$col}",
+                'expr'   => 'eq',
+                'value'  => $val
+            );
+        }
+        // Get a list of custom form fields
+        $fields = $this->getEntities(array(
+            'filter'     => array(
+                'force' => $forceFilters
+            ),
+            'orderBy'    => 'f.order',
+            'orderByDir' => 'asc'
+        ));
+
+        $leadFields = array();
+
+        foreach ($fields as $f) {
+            $leadFields[$f->getAlias()] = $f->getLabel();
+        }
+
+        return $leadFields;
+    }
+
+    /*
+     * Retrieves a list of published fields that are unique identifers
+     *
+     * @return array
+     */
+    public function getUniqueIdentiferFields()
+    {
+        $filters = array ('isPublished' => true, 'isUniqueIdentifer' => true);
+
+        $fields = $this->getFieldList(false, true, $filters);
+
+        return $fields;
+    }
+
+    /*
+     * Wrapper for misspelled getUniqueIdentiferFields
+     *
+     * @return array
+     */
+    public function getUniqueIdentifierFields()
+    {
+        return $this->getUniqueIdentiferFields();
     }
 }

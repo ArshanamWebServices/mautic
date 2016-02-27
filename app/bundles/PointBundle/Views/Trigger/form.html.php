@@ -26,7 +26,7 @@ $view['slots']->set("headerTitle", $header);
             <div class="col-xs-12">
                 <!-- tabs controls -->
                 <ul class="bg-auto nav nav-tabs pr-md pl-md">
-                    <li class="active"><a href="#details-container" role="tab" data-toggle="tab"><?php echo $view['translator']->trans('mautic.point.trigger.tab.details'); ?></a></li>
+                    <li class="active"><a href="#details-container" role="tab" data-toggle="tab"><?php echo $view['translator']->trans('mautic.core.details'); ?></a></li>
                     <li class=""><a href="#events-container" role="tab" data-toggle="tab"><?php echo $view['translator']->trans('mautic.point.trigger.tab.events'); ?></a></li>
                 </ul>
                 <!--/ tabs controls -->
@@ -119,7 +119,8 @@ $view['slots']->set("headerTitle", $header);
 
  <?php
     $view['slots']->append('modal', $this->render('MauticCoreBundle:Helper:modal.html.php', array(
-        'id'     => 'triggerEventModal',
-        'header' => $view['translator']->trans('mautic.point.trigger.form.modalheader'),
+        'id'            => 'triggerEventModal',
+        'header'        => $view['translator']->trans('mautic.point.trigger.form.modalheader'),
+        'footerButtons' => true
     )));
 ?>

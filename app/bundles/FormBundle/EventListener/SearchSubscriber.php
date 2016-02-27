@@ -51,7 +51,7 @@ class SearchSubscriber extends CommonSubscriber
             //only show own forms if the user does not have permission to view others
             if (!$permissions['form:forms:viewother']) {
                 $filter['force'] = array(
-                    array('column' => 'f.createdBy', 'expr' => 'eq', 'value' => $this->factory->getUser())
+                    array('column' => 'f.createdBy', 'expr' => 'eq', 'value' => $this->factory->getUser()->getId()->getId())
                 );
             }
 
@@ -80,7 +80,7 @@ class SearchSubscriber extends CommonSubscriber
                     )->getContent();
                 }
                 $formResults['count'] = count($forms);
-                $event->addResults('mautic.form.form.header.index', $formResults);
+                $event->addResults('mautic.form.forms', $formResults);
             }
         }
     }
@@ -92,7 +92,7 @@ class SearchSubscriber extends CommonSubscriber
     {
         if ($this->security->isGranted(array('form:forms:viewown', 'form:forms:viewother'), "MATCH_ONE")) {
             $event->addCommands(
-                'mautic.form.form.header.index',
+                'mautic.form.forms',
                 $this->factory->getModel('form.form')->getCommandList()
             );
         }

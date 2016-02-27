@@ -13,7 +13,6 @@ use Mautic\CoreBundle\Factory\MauticFactory;
 use Mautic\CoreBundle\Form\EventListener\CleanFormSubscriber;
 use Mautic\CoreBundle\Form\EventListener\FormExitSubscriber;
 use Symfony\Component\Form\AbstractType;
-use Symfony\Component\Form\Extension\Core\ChoiceList\ChoiceList;
 use Symfony\Component\Form\FormBuilderInterface;
 use Symfony\Component\OptionsResolver\OptionsResolverInterface;
 
@@ -47,13 +46,13 @@ class CampaignType extends AbstractType
         $builder->addEventSubscriber(new FormExitSubscriber('campaign', $options));
 
         $builder->add('name', 'text', array(
-            'label'      => 'mautic.campaign.form.name',
+            'label'      => 'mautic.core.name',
             'label_attr' => array('class' => 'control-label'),
             'attr'       => array('class' => 'form-control')
         ));
 
         $builder->add('description', 'textarea', array(
-            'label'      => 'mautic.campaign.form.description',
+            'label'      => 'mautic.core.description',
             'label_attr' => array('class' => 'control-label'),
             'attr'       => array('class' => 'form-control editor'),
             'required'   => false
@@ -112,34 +111,13 @@ class CampaignType extends AbstractType
             $builder->setAction($options["action"]);
         }
 
-        //add lead lists
-        $transformer = new \Mautic\CoreBundle\Form\DataTransformer\IdToEntityModelTransformer(
-            $this->em,
-            'MauticLeadBundle:LeadList',
-            'id',
-            true
-        );
-        $builder->add(
-            $builder->create('lists', 'leadlist_choices', array(
-                'label'      => 'mautic.campaign.form.list',
-                'label_attr' => array('class' => 'control-label'),
-                'attr'       => array(
-                    'class' => 'form-control'
-                ),
-                'multiple' => true,
-                'expanded' => false,
-                'global_only' => true
-            ))
-                ->addModelTransformer($transformer)
-        );
-
         $builder->add('buttons', 'form_buttons', array(
             'pre_extra_buttons' => array(
                 array(
                     'name'  => 'builder',
                     'label' => 'mautic.campaign.campaign.launch.builder',
                     'attr'  => array(
-                        'class'   => 'btn btn-default',
+                        'class'   => 'btn btn-default btn-dnd',
                         'icon'    => 'fa fa-cube',
                         'onclick' => "Mautic.launchCampaignEditor();"
                     )

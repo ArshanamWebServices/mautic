@@ -33,7 +33,6 @@ class FieldController extends CommonFormController
 
         if ($method == 'POST') {
             $formField          = $this->request->request->get('formfield');
-            $formField['alias'] = 'new';
             $fieldType          = $formField['type'];
             $formId             = $formField['formId'];
         } else {
@@ -41,7 +40,6 @@ class FieldController extends CommonFormController
             $formId    = $this->request->query->get('formId');
             $formField = array(
                 'type'   => $fieldType,
-                'alias'  => 'new',
                 'formId' => $formId
             );
         }
@@ -59,9 +57,19 @@ class FieldController extends CommonFormController
 
         $customParams = (isset($customComponents['fields'][$fieldType])) ? $customComponents['fields'][$fieldType] : false;
 
+
+        // Only show the lead fields not already used
+        $usedLeadFields = $session->get('mautic.form.'.$formId.'.fields.leadfields', array());
+        $testLeadFields = array_flip($usedLeadFields);
+        $leadFields     = $this->factory->getModel('lead.field')->getFieldList();
+        foreach ($leadFields as &$group) {
+            $group = array_diff_key($group, $testLeadFields);
+        }
+
         $form = $this->get('form.factory')->create('formfield', $formField, array(
             'action'           => $this->generateUrl('mautic_formfield_action', array('objectAction' => 'new')),
-            'customParameters' => $customParams
+            'customParameters' => $customParams,
+            'leadFields'       => $leadFields
         ));
         $form->get('formId')->setData($formId);
 
@@ -80,19 +88,49 @@ class FieldController extends CommonFormController
                     $keyId = 'new' . hash('sha1', uniqid(mt_rand()));
 
                     //save the properties to session
-                    $fields          = $session->get('mautic.form.'.$formId.'.fields.modified');
+                    $fields          = $session->get('mautic.form.'.$formId.'.fields.modified', array());
                     $formData        = $form->getData();
                     $formField       = array_merge($formField, $formData);
                     $formField['id'] = $keyId;
-                    $fields[$keyId]  = $formField;
+
+                    // Get aliases in order to generate a new one for the new field
+                    $aliases = array();
+                    foreach ($fields as $f) {
+                        $aliases[] = $f['alias'];
+                    }
+                    $formField['alias'] = $this->factory->getModel('form.field')->generateAlias($formField['label'], $aliases);
+
+                    if (empty($formField['alias'])) {
+                        // Likely a bogus label so generate random alias for column name
+                        $formField['alias'] = uniqid('f_');
+                    }
+
+                    // Force required for captcha
+                    if ($formField['type'] == 'captcha') {
+                        $formField['isRequired'] = true;
+                    }
+
+                    // Add it to the next to last assuming the last is the submit button
+                    if (count($fields)) {
+                        $lastField = end($fields);
+                        $lastKey   = key($fields);
+                        array_pop($fields);
+
+                        $fields[$keyId]   = $formField;
+                        $fields[$lastKey] = $lastField;
+                    } else {
+                        $fields[$keyId] = $formField;
+                    }
+
                     $session->set('mautic.form.'.$formId.'.fields.modified', $fields);
 
-                    //take note if this is a submit button or not
-                    if ($fieldType == 'button' && $formField['properties']['type'] == 'submit') {
-                        $submits   = $session->get('mautic.form.'.$formId.'.fields.submits', array());
-                        $submits[] = $keyId;
-                        $session->set('mautic.form.'.$formId.'.fields.submits', $submits);
+                    // Keep track of used lead fields
+                    if (!empty($formData['leadField'])) {
+                        $usedLeadFields[$keyId] = $formData['leadField'];
+                    } else {
+                        unset($usedLeadFields[$keyId]);
                     }
+                    $session->set('mautic.form.'.$formId.'.fields.leadfields', $usedLeadFields);
                 } else {
                     $success = 0;
                 }
@@ -106,8 +144,7 @@ class FieldController extends CommonFormController
             $closeModal                = false;
             $viewParams['tmpl']        = 'field';
             $viewParams['form']        = (isset($customParams['formTheme'])) ? $this->setFormTheme($form, 'MauticFormBundle:Builder:field.html.php', $customParams['formTheme']) : $form->createView();
-            $header                    = (!empty($customParams)) ? $customParams['label'] : 'mautic.form.field.type.' . $fieldType;
-            $viewParams['fieldHeader'] = $this->get('translator')->trans($header);
+            $viewParams['fieldHeader'] = (!empty($customParams)) ? $this->get('translator')->trans($customParams['label']) : $this->get('translator')->transConditional('mautic.core.type.' . $fieldType, 'mautic.form.field.type.' . $fieldType);
         }
 
         $passthroughVars = array(
@@ -179,9 +216,22 @@ class FieldController extends CommonFormController
             //set custom params from event if applicable
             $customParams = (!empty($formField['isCustom'])) ? $formField['customParameters'] : array();
 
+            // Only show the lead fields not already used
+            $usedLeadFields = $session->get('mautic.form.'.$formId.'.fields.leadfields', array());
+            $testLeadFields = array_flip($usedLeadFields);
+            $currentLeadField = (isset($formField['leadField'])) ? $formField['leadField'] : null;
+            if (!empty($currentLeadField) && isset($testLeadFields[$currentLeadField])) {
+                unset($testLeadFields[$currentLeadField]);
+            }
+            $leadFields     = $this->factory->getModel('lead.field')->getFieldList();
+            foreach ($leadFields as &$group) {
+                $group = array_diff_key($group, $testLeadFields);
+            }
+
             $form = $this->get('form.factory')->create('formfield', $formField, array(
                 'action'           => $this->generateUrl('mautic_formfield_action', array('objectAction' => 'edit', 'objectId' => $objectId)),
-                'customParameters' => $customParams
+                'customParameters' => $customParams,
+                'leadFields'       => $leadFields
             ));
             $form->get('formId')->setData($formId);
 
@@ -197,24 +247,31 @@ class FieldController extends CommonFormController
                         $session  = $this->factory->getSession();
                         $fields   = $session->get('mautic.form.'.$formId.'.fields.modified');
                         $formData = $form->getData();
+
                         //overwrite with updated data
-                        $formField = $fields[$objectId] = array_merge($fields[$objectId], $formData);
+                        $formField = array_merge($fields[$objectId], $formData);
+
+                        if (strpos($objectId, 'new') !== false) {
+                            // Get aliases in order to generate update for this one
+                            $aliases = array();
+                            foreach ($fields as $k => $f) {
+                                if ($k != $objectId) {
+                                    $aliases[] = $f['alias'];
+                                }
+                            }
+                            $formField['alias'] = $this->factory->getModel('form.field')->generateAlias($formField['label'], $aliases);
+                        }
+
+                        $fields[$objectId] = $formField;
                         $session->set('mautic.form.'.$formId.'.fields.modified', $fields);
 
-                        //take note if this is a submit button or not
-                        if ($fieldType == 'button') {
-                            $submits = $session->get('mautic.form.'.$formId.'.fields.submits', array());
-                            if ($formField['properties']['type'] == 'submit' && !in_array($objectId, $submits)) {
-                                //button type updated to submit
-                                $submits[] = $objectId;
-                                $session->set('mautic.form.'.$formId.'.fields.submits', $submits);
-                            } elseif ($formField['properties']['type'] != 'submit' && in_array($objectId, $submits)) {
-                                //button type updated to something other than submit
-                                $key = array_search($objectId, $submits);
-                                unset($submits[$key]);
-                                $session->set('mautic.form.'.$formId.'.fields.submits', $submits);
-                            }
+                        // Keep track of used lead fields
+                        if (!empty($formData['leadField'])) {
+                            $usedLeadFields[$objectId] = $formData['leadField'];
+                        } else {
+                            unset($usedLeadFields[$objectId]);
                         }
+                        $session->set('mautic.form.'.$formId.'.fields.leadfields', $usedLeadFields);
                     }
                 }
             }
@@ -226,8 +283,7 @@ class FieldController extends CommonFormController
                 $closeModal                = false;
                 $viewParams['tmpl']        = 'field';
                 $viewParams['form']        = (isset($customParams['formTheme'])) ? $this->setFormTheme($form, 'MauticFormBundle:Builder:field.html.php', $customParams['formTheme']) : $form->createView();
-                $header                    = (!empty($customParams)) ? $customParams['label'] : 'mautic.form.field.type.' . $fieldType;
-                $viewParams['fieldHeader'] = $this->get('translator')->trans($header);
+                $viewParams['fieldHeader'] = (!empty($customParams)) ? $this->get('translator')->trans($customParams['label']) : $this->get('translator')->transConditional('mautic.core.type.' . $fieldType, 'mautic.form.field.type.' . $fieldType);
             }
 
             $passthroughVars = array(
@@ -310,17 +366,6 @@ class FieldController extends CommonFormController
                 $session->set('mautic.form.'.$formId.'.fields.deleted', $delete);
             }
 
-            //take note if this is a submit button or not
-            if ($formField['type'] == 'button') {
-                $submits    = $session->get('mautic.form.'.$formId.'.fields.submits', array());
-                $properties = $formField['properties'];
-                if ($properties['type'] == 'submit' && in_array($objectId, $submits)) {
-                    $key = array_search($objectId, $submits);
-                    unset($submits[$key]);
-                    $session->set('mautic.form.'.$formId.'.fields.submits', $submits);
-                }
-            }
-
             if (!empty($customParams)) {
                 $template = $customParams['template'];
             } else {
@@ -388,16 +433,6 @@ class FieldController extends CommonFormController
                 $key = array_search($objectId, $delete);
                 unset($delete[$key]);
                 $session->set('mautic.form.'.$formId.'.fields.deleted', $delete);
-            }
-
-            //take note if this is a submit button or not
-            if ($formField['type'] == 'button') {
-                $properties = $formField['properties'];
-                if ($properties['type'] == 'submit') {
-                    $submits   = $session->get('mautic.form.'.$formId.'.fields.submits', array());
-                    $submits[] = $objectId;
-                    $session->set('mautic.form.'.$formId.'.fields.submits', $submits);
-                }
             }
 
             if (!empty($customParams)) {
